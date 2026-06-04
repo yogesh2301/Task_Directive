@@ -1,0 +1,35 @@
+
+1.download zip file.
+2.refer previous code folders
+3.copy "offline_packages" and "venv" folders into the project folder
+4.run the following commands 
+
+
+open forlder terminal run the commands:
+venv\scripts\activate
+python main.py
+
+
+
+Project-Folder
+├── components
+│ ├── pdf_viewer.py :""
+│ ├── tables.py
+│ └── text_editor.py
+│
+├── core
+│ ├── __init__.py
+│ ├── analysis.py
+│ ├── export.py
+│ ├── ocr.py
+│ ├── pdf_handler.py
+│ └── signature.py
+│
+├── ui
+│ ├── __init__.py
+│ ├── dialogs.py
+│ ├── main_window.py
+│ ├── styles.py
+│ └── widgets.py
+│
+└── main.py
