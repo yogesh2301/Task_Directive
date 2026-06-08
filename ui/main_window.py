@@ -133,7 +133,7 @@ class OfflineApp(QMainWindow):
         self.pdf_handler = PDFHandler()
         self.current_zoom = 600
         self.last_region_ocr_text = ""
-        self.annexure3_image_path = ""
+        self.annexure3_images = []  # Change 19: Store multiple Annexure-3 image paths instead of a single one.
         self.last_docx_path = ""
         
         # Data Variables
@@ -896,32 +896,27 @@ class OfflineApp(QMainWindow):
         self.flash_data_icon()
 
     def set_annexure3_image(self, pixmap):
+        # Change 19: Allow adding multiple images to Annexure-3 instead of replacing a single image.
         if not pixmap or pixmap.isNull():
             QMessageBox.warning(self, "PBS/Annexure-3", "No image was selected.")
             return
 
-        if self.annexure3_image_path and os.path.exists(self.annexure3_image_path):
-            try:
-                os.remove(self.annexure3_image_path)
-            except OSError:
-                pass
-
         temp_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-        self.annexure3_image_path = temp_file.name
+        image_path = temp_file.name
         temp_file.close()
-        if not pixmap.save(self.annexure3_image_path, "PNG"):
+        if not pixmap.save(image_path, "PNG"):
             QMessageBox.critical(
                 self,
                 "PBS/Annexure-3",
                 "Could not save the selected image."
             )
-            self.annexure3_image_path = ""
             return
 
+        self.annexure3_images.append(image_path)
         QMessageBox.information(
             self,
             "PBS/Annexure-3",
-            "Selected image will be added to Annexure-3 in the generated Word document."
+            f"Image added to Annexure-3.\n\nTotal images: {len(self.annexure3_images)}"
         )
 
     def showEvent(self, event):
@@ -1028,7 +1023,8 @@ class OfflineApp(QMainWindow):
             "date_of_issue": "",
         }
         self.last_region_ocr_text = ""
-        self.annexure3_image_path = ""
+        # Change 19: Clear all Annexure-3 images on file upload to reset state.
+        self.annexure3_images = []
         self.last_docx_path = ""
         if hasattr(self, 'notes_editors'):
             for editor in self.notes_editors.values():
@@ -1109,11 +1105,10 @@ class OfflineApp(QMainWindow):
 
     def export_pdf(self):
         try:
+            # Change 19: Pass list of Annexure-3 image paths to the exporter.
             scope_combo = self.combos.get("Scope Of Task Directive")
             scope_items = scope_combo.checkedItems() if scope_combo else []
 
-            # CHANGED: Modified to pass individual data parameters instead of table_data dict
-            # This provides better clarity and flexibility when calling the exporter
             temp_path = DocxExporter.create_preview_pdf(
                 project_name=self.extracted_project_name,
                 intro_text=self.intro_text_data,
@@ -1122,7 +1117,7 @@ class OfflineApp(QMainWindow):
                 stakeholders=self.stakeholders_data,
                 cert_tasks=self.cert_task_data,
                 combos=self.combos,
-                annexure3_image_path=self.annexure3_image_path,
+                annexure3_image_path=self.annexure3_images,
                 # CHANGED: Pass individual data structures for better API
                 # Each data type is now explicitly named instead of nested in table_data
                 issue_details=self.issue_details_data,
@@ -1148,8 +1143,7 @@ class OfflineApp(QMainWindow):
         scope_combo = self.combos.get("Scope Of Task Directive")
         scope_items = scope_combo.checkedItems() if scope_combo else []
         
-        # CHANGED: Modified to pass individual data parameters instead of table_data dict
-        # This provides better clarity and flexibility when calling the exporter
+        # Change 19: Pass list of Annexure-3 image paths to the exporter.
         DocxExporter.export(
             save_path,
             project_name=self.extracted_project_name,
@@ -1159,7 +1153,7 @@ class OfflineApp(QMainWindow):
             stakeholders=self.stakeholders_data,
             cert_tasks=self.cert_task_data,
             combos=self.combos,
-            annexure3_image_path=self.annexure3_image_path,
+            annexure3_image_path=self.annexure3_images,
             # CHANGED: Pass individual data structures for better API
             # Each data type is now explicitly named instead of nested in table_data
             issue_details=self.issue_details_data,

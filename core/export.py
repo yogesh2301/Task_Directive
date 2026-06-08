@@ -787,24 +787,38 @@ class DocxExporter:
             p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
     @staticmethod
-    def _add_annexure3_image(doc, image_path):
-        if not image_path:
+    def _add_annexure3_image(doc, image_paths):
+        # Change 19: Support multiple images for Annexure-3 by accepting a list of image paths.
+        if not image_paths:
+            doc.add_paragraph("____")
+            return
+
+        # Handle both single path (string) and multiple paths (list) for backward compatibility
+        if isinstance(image_paths, str):
+            image_paths = [image_paths] if image_paths else []
+
+        if not image_paths:
             doc.add_paragraph("____")
             return
 
         try:
-            paragraph = doc.add_paragraph()
-            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            run = paragraph.add_run()
-            image = DocxImage.from_file(image_path)
-            max_width = Inches(6.5)
-            max_height = Inches(8.6)
-            if image.px_width / image.px_height > max_width / max_height:
-                run.add_picture(image_path, width=max_width)
-            else:
-                run.add_picture(image_path, height=max_height)
+            for image_path in image_paths:
+                if not image_path or not os.path.exists(image_path):
+                    continue
+                paragraph = doc.add_paragraph()
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                run = paragraph.add_run()
+                image = DocxImage.from_file(image_path)
+                max_width = Inches(6.5)
+                max_height = Inches(8.6)
+                if image.px_width / image.px_height > max_width / max_height:
+                    run.add_picture(image_path, width=max_width)
+                else:
+                    run.add_picture(image_path, height=max_height)
+                # Add page break after each image for clarity
+                doc.add_page_break()
         except Exception:
-            doc.add_paragraph("Selected PBS/Annexure-3 image could not be added.")
+            doc.add_paragraph("Selected PBS/Annexure-3 image(s) could not be added.")
 
     @staticmethod
     def _add_heading(doc, text):
