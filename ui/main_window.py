@@ -20,10 +20,12 @@ from components.tables import ProjectTablesDialog
 from core.pdf_handler import PDFHandler
 from core.analysis import (
     AnalysisWorker,
+    SummarizationWorker,
     simple_summarize,
     FileDetailsWorker,
     SignatureValidationWorker,
 )
+# Change 10: Use SummarizationWorker for selected-text summarization requests from the UI.
 from core.export import PDFExporter, DocxExporter
 from core.ocr import extract_file_details_from_text, extract_region_text
 
@@ -828,15 +830,53 @@ class OfflineApp(QMainWindow):
         if clipboard_text.strip():
             self.generate_summary_from_selection(clipboard_text)
 
+    # Change 11: Summarize selected or clipboard text using the background summarization worker.
+    # This keeps the UI responsive and uses the advanced model when available.
     def generate_summary_from_selection(self, text):
-        self.status_label.setText("Summarizing...")
-        summary = simple_summarize(text)
-        if summary:
-            self.intro_text_data = summary
-            self.popup_summary_edit.setText(summary)
-            self.flash_data_icon()
+        if not text or not text.strip():
+            QMessageBox.information(
+                self,
+                "Summarization",
+                "Please select text before summarizing."
+            )
+            return
+
+        self.pending_summary_text = text
+        self.status_label.setText("Summarizing selection...")
+        self.progress_bar.show()
+
+        self.summary_worker = SummarizationWorker(text)
+        self.summary_worker.finished.connect(self.handle_summary_done)
+        self.summary_worker.error.connect(self.handle_summary_error)
+        self.summary_worker.status.connect(
+            lambda msg: self.status_label.setText(msg)
+        )
+        self.summary_worker.start()
+
+    def handle_summary_done(self, summary):
+        self.progress_bar.hide()
+        self.status_label.setText("Summary ready")
+        self.intro_text_data = summary
+        self.popup_summary_edit.setText(summary)
+        self.flash_data_icon()
+        if "Introduction" in self.topic_checkboxes:
             self.topic_checkboxes["Introduction"].setChecked(True)
-        self.status_label.setText("Ready")
+
+    def handle_summary_error(self, message):
+        # Change 12: If model summarization fails, fall back to the local summarizer and keep the app working.
+        self.progress_bar.hide()
+        self.status_label.setText("Summary failed")
+        QMessageBox.warning(
+            self,
+            "Summarization Error",
+            f"Advanced model summarization failed:\n{message}\n\nLocal fallback will be used."
+        )
+        fallback = simple_summarize(self.pending_summary_text or "")
+        self.intro_text_data = fallback
+        self.popup_summary_edit.setText(fallback)
+        self.flash_data_icon()
+        if "Introduction" in self.topic_checkboxes:
+            self.topic_checkboxes["Introduction"].setChecked(True)
 
     def add_extracted_text(self, text):
         QApplication.clipboard().setText(text)
@@ -1072,16 +1112,24 @@ class OfflineApp(QMainWindow):
             scope_combo = self.combos.get("Scope Of Task Directive")
             scope_items = scope_combo.checkedItems() if scope_combo else []
 
+            # CHANGED: Modified to pass individual data parameters instead of table_data dict
+            # This provides better clarity and flexibility when calling the exporter
             temp_path = DocxExporter.create_preview_pdf(
-                self.extracted_project_name,
-                self.intro_text_data,
-                self.get_all_manual_notes_text(),
-                scope_items,
-                self.stakeholders_data,
-                self.cert_task_data,
-                self.combos,
-                self.annexure3_image_path,
-                self.get_docx_table_data()
+                project_name=self.extracted_project_name,
+                intro_text=self.intro_text_data,
+                manual_notes=self.get_all_manual_notes_text(),
+                scope_items=scope_items,
+                stakeholders=self.stakeholders_data,
+                cert_tasks=self.cert_task_data,
+                combos=self.combos,
+                annexure3_image_path=self.annexure3_image_path,
+                # CHANGED: Pass individual data structures for better API
+                # Each data type is now explicitly named instead of nested in table_data
+                issue_details=self.issue_details_data,
+                annexure1_data=self.annexure1_data,
+                annexure2_data=self.annexure2_data,
+                test_rigs_data=self.test_rigs_data,
+                aircraft_checks_data=self.aircraft_checks_data
             )
 
             self.preview_dialog = PDFViewerDialog(temp_path, self)
@@ -1100,17 +1148,25 @@ class OfflineApp(QMainWindow):
         scope_combo = self.combos.get("Scope Of Task Directive")
         scope_items = scope_combo.checkedItems() if scope_combo else []
         
+        # CHANGED: Modified to pass individual data parameters instead of table_data dict
+        # This provides better clarity and flexibility when calling the exporter
         DocxExporter.export(
             save_path,
-            self.extracted_project_name,
-            self.intro_text_data,
-            self.get_all_manual_notes_text(),
-            scope_items,
-            self.stakeholders_data,
-            self.cert_task_data,
-            self.combos,
-            self.annexure3_image_path,
-            self.get_docx_table_data()
+            project_name=self.extracted_project_name,
+            intro_text=self.intro_text_data,
+            manual_notes=self.get_all_manual_notes_text(),
+            scope_items=scope_items,
+            stakeholders=self.stakeholders_data,
+            cert_tasks=self.cert_task_data,
+            combos=self.combos,
+            annexure3_image_path=self.annexure3_image_path,
+            # CHANGED: Pass individual data structures for better API
+            # Each data type is now explicitly named instead of nested in table_data
+            issue_details=self.issue_details_data,
+            annexure1_data=self.annexure1_data,
+            annexure2_data=self.annexure2_data,
+            test_rigs_data=self.test_rigs_data,
+            aircraft_checks_data=self.aircraft_checks_data
         )
         self.last_docx_path = save_path
 

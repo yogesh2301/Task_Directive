@@ -11,6 +11,31 @@ import numpy as np
 import pytesseract
 from PyQt6.QtGui import QImage
 
+# Change 13: Add optional transformer-based summarization support for selected text.
+# This enables the app to use an advanced BART + grammar correction model when installed,
+# while preserving the existing local summarizer fallback when dependencies are missing.
+try:
+    import torch
+    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+    HAS_TRANSFORMERS = True
+except ImportError:
+    torch = None
+    AutoTokenizer = None
+    AutoModelForSeq2SeqLM = None
+    HAS_TRANSFORMERS = False
+
+SUMMARIZER_MODEL = "facebook/bart-large-cnn"
+GRAMMAR_MODEL = "vennify/t5-base-grammar-correction"
+_device = (
+    torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if HAS_TRANSFORMERS else None
+)
+
+_sum_tok = None
+_sum_model = None
+_gram_tok = None
+_gram_model = None
+
 def simple_summarize(text, target_ratio=0.5, min_sentences=10, max_sentences=15):
     if not text or len(text.strip()) < 20:
         return text.strip()
@@ -60,6 +85,95 @@ def simple_summarize(text, target_ratio=0.5, min_sentences=10, max_sentences=15)
         sorted(scores, key=scores.get, reverse=True)[:num_sentences]
     )
     return " ".join([sentences[i] for i in top_indices])
+
+
+# Change 14: Load transformer models lazily on first summary request.
+# This avoids heavy startup cost and only loads the model when needed for selected-text summarization.
+def _load_transformer_models():
+    global _sum_tok, _sum_model, _gram_tok, _gram_model
+    if not HAS_TRANSFORMERS:
+        raise RuntimeError(
+            "Transformers summarization model is unavailable. "
+            "Install transformers, torch, and sentencepiece."
+        )
+    if _sum_tok is None or _gram_tok is None:
+        _sum_tok = AutoTokenizer.from_pretrained(SUMMARIZER_MODEL)
+        _sum_model = AutoModelForSeq2SeqLM.from_pretrained(SUMMARIZER_MODEL).to(_device)
+        _gram_tok = AutoTokenizer.from_pretrained(GRAMMAR_MODEL)
+        _gram_model = AutoModelForSeq2SeqLM.from_pretrained(GRAMMAR_MODEL).to(_device)
+
+
+# Change 15: Use transformer models to produce an abstractive summary and then grammar-correct it.
+def summarize_with_transformers(
+    text,
+    max_length=130,
+    min_length=30,
+    num_beams=4,
+    length_penalty=2.0,
+):
+    if not text or len(text.strip()) < 20:
+        return text.strip()
+    _load_transformer_models()
+
+    inputs = _sum_tok(
+        text,
+        return_tensors="pt",
+        max_length=1024,
+        truncation=True,
+    ).to(_device)
+
+    with torch.no_grad():
+        summary_ids = _sum_model.generate(
+            inputs["input_ids"],
+            max_length=max_length,
+            min_length=min_length,
+            num_beams=num_beams,
+            length_penalty=length_penalty,
+            early_stopping=True,
+        )
+    raw_summary = _sum_tok.decode(summary_ids[0], skip_special_tokens=True)
+
+    gram_inputs = _gram_tok(
+        f"grammar: {raw_summary}",
+        return_tensors="pt",
+        truncation=True,
+    ).to(_device)
+
+    with torch.no_grad():
+        gram_ids = _gram_model.generate(gram_inputs["input_ids"], max_length=200)
+    corrected = _gram_tok.decode(gram_ids[0], skip_special_tokens=True).strip()
+    if corrected:
+        corrected = corrected[0].upper() + corrected[1:]
+        if corrected[-1] not in ".!?":
+            corrected += "."
+    return corrected or raw_summary
+
+
+# Change 16: Run advanced summarization in a background thread to keep the UI responsive.
+class SummarizationWorker(QThread):
+    finished = pyqtSignal(str)
+    error = pyqtSignal(str)
+    status = pyqtSignal(str)
+
+    def __init__(self, text, parent=None):
+        super().__init__(parent)
+        self.text = text
+
+    def run(self):
+        if not self.text.strip():
+            self.finished.emit("")
+            return
+
+        self.status.emit("Summarizing selection...")
+        try:
+            if HAS_TRANSFORMERS:
+                summary = summarize_with_transformers(self.text)
+            else:
+                self.status.emit("Model not installed; using local summarizer.")
+                summary = simple_summarize(self.text)
+            self.finished.emit(summary)
+        except Exception as exc:
+            self.error.emit(str(exc))
 
 
 # ---------------------------------------------------------------------------

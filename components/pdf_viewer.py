@@ -55,7 +55,7 @@ class PdfPageLabel(QLabel):
     image_extracted = pyqtSignal(QPixmap)
     annexure3_image_extracted = pyqtSignal(QPixmap)
     summary_requested = pyqtSignal(str)
-    region_ocr_requested = pyqtSignal(QPixmap, QRect, object)  # NEW: pixmap, rect, page
+    region_ocr_requested = pyqtSignal(QPixmap, QRect, object)  # Change 17: Emit page-aware region OCR selection details.
 
     def __init__(self, page, scroll_area, parent=None):
         super().__init__(parent)
@@ -141,12 +141,13 @@ class PdfPageLabel(QLabel):
         
         annexure3_img_action = menu.addAction("Add as image to PBS/Annexure-3")
 
-        # Text extraction
-        copy_text_action = menu.addAction("Extract Text to Notes")
+        # Change 9: Add a dedicated copy action so selected PDF text can be copied directly to the clipboard.
+        copy_text_action = menu.addAction("Copy Text")
+        extract_text_action = menu.addAction("Extract Text to Notes")
         
         menu.addSeparator()
         
-        # NEW: OCR extraction to File Details
+        # Change 9: Keep the existing extract-to-notes action separate from the clipboard copy action.
         ocr_action = menu.addAction("Extract to File Details (OCR)")
         ocr_action.setToolTip("Extract metadata from selection to File Details tab")
         
@@ -168,10 +169,16 @@ class PdfPageLabel(QLabel):
         elif action == copy_text_action:
             text = self.get_text_from_rect(rect)
             if text:
+                QApplication.clipboard().setText(text)
+                # Change 9: Copy selected text directly to the clipboard without modifying notes.
+        elif action == extract_text_action:
+            text = self.get_text_from_rect(rect)
+            if text:
                 self.text_extracted.emit(text)
+                # Change 9: Send selected text to notes as before.
         
         elif action == ocr_action:
-            # NEW: Emit signal for region OCR
+            # Change 18: Emit the region OCR signal so selected text can be extracted into File Details.
             if self.pixmap():
                 self.region_ocr_requested.emit(self.pixmap(), rect, self.page)
         

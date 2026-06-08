@@ -59,15 +59,10 @@ class PDFViewerDialog(QDialog):
         toolbar_layout.addWidget(zoom_in_btn)
         layout.addLayout(toolbar_layout)
         
-        if HAS_WEBENGINE:
-            self.viewer = QWebEngineView()
-            self.viewer.settings().setAttribute(
-                QWebEngineSettings.WebAttribute.PdfViewerEnabled, True
-            )
-            self.viewer.setUrl(QUrl.fromLocalFile(os.path.abspath(pdf_path)))
-            layout.addWidget(self.viewer)
-        else:
-            self._add_fallback_viewer(layout, pdf_path)
+        # Change 7: Prefer the fallback viewer for PDF previews because QWebEngineView
+        # can render a blank white page in some Qt/WebEngine setups.
+        self.viewer = None
+        self._add_fallback_viewer(layout, pdf_path)
 
         close_btn = QPushButton("Close Preview")
         close_btn.setObjectName("CloseBtn")

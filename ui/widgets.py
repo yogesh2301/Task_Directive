@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QPushButton, QFrame, QDialog,
     QListWidget, QListWidgetItem, QLineEdit, QLabel, QHBoxLayout,
-    QSizePolicy, QToolButton, QApplication
+    QSizePolicy, QToolButton, QApplication, QScrollArea
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QCursor
@@ -187,6 +187,7 @@ class DropdownPopup(QDialog):
 
     def hideEvent(self, event):
         self.parent_btn.set_popup_open(False)
+        self.parent_btn._detach_scroll_listeners()
         super().hideEvent(event)
 
     def filter_options(self, text):
@@ -252,6 +253,7 @@ class PopupMultiSelect(QPushButton):
         self.options = options
         self.popup = None
         self.is_popup_open = False
+        self._scroll_area = None  # Change 8: Track the parent scroll area so the dropdown can reposition during scrolling.
         self.setMinimumHeight(42)
         self.setMaximumHeight(78)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -306,15 +308,57 @@ class PopupMultiSelect(QPushButton):
         if not self.popup:
             self.popup = DropdownPopup(self, self.options)
 
+        self._attach_scroll_listeners()  # Change 8: Ensure the popup stays attached to its button while parent content scrolls.
+
         screen = QApplication.screenAt(self.mapToGlobal(self.rect().center()))
         available_rect = screen.availableGeometry() if screen else QApplication.primaryScreen().availableGeometry()
         popup_width = max(self.width(), 360)
         self.popup.setFixedWidth(popup_width)
         self.popup.adjustSize()
 
+        self._update_popup_position(available_rect)
+        self.popup.show()
+        self.set_popup_open(True)
+        self.popup.search_input.setFocus()
+
+    def _attach_scroll_listeners(self):
+        # Change 8: Make the dropdown follow the button when the parent content scrolls.
+        if self._scroll_area:
+            return
+        parent = self.parentWidget()
+        while parent:
+            if isinstance(parent, QScrollArea):
+                self._scroll_area = parent
+                break
+            parent = parent.parentWidget()
+
+        if self._scroll_area:
+            self._scroll_area.verticalScrollBar().valueChanged.connect(self._on_scroll)
+            self._scroll_area.horizontalScrollBar().valueChanged.connect(self._on_scroll)
+
+    def _detach_scroll_listeners(self):
+        # Change 8: Disconnect from scroll signals when the popup closes to avoid stale callbacks.
+        if not hasattr(self, '_scroll_area') or not self._scroll_area:
+            return
+        try:
+            self._scroll_area.verticalScrollBar().valueChanged.disconnect(self._on_scroll)
+            self._scroll_area.horizontalScrollBar().valueChanged.disconnect(self._on_scroll)
+        except Exception:
+            pass
+        self._scroll_area = None
+
+    def _on_scroll(self, value):
+        # Change 8: Reposition the popup while the user scrolls so it remains visible and attached to the button.
+        if self.popup and self.popup.isVisible():
+            screen = QApplication.screenAt(self.mapToGlobal(self.rect().center()))
+            available_rect = screen.availableGeometry() if screen else QApplication.primaryScreen().availableGeometry()
+            self._update_popup_position(available_rect)
+
+    def _update_popup_position(self, available_rect):
         below = self.mapToGlobal(self.rect().bottomLeft())
         above = self.mapToGlobal(self.rect().topLeft())
         popup_height = self.popup.sizeHint().height()
+        popup_width = self.popup.width()
         max_below_height = available_rect.bottom() - below.y() - 8
         max_above_height = above.y() - available_rect.top() - 8
         target_x = min(max(below.x(), available_rect.left()), available_rect.right() - popup_width)
@@ -328,9 +372,6 @@ class PopupMultiSelect(QPushButton):
 
         self.popup.setMaximumHeight(max_height)
         self.popup.move(target_x, max(available_rect.top() + 4, target_y))
-        self.popup.show()
-        self.set_popup_open(True)
-        self.popup.search_input.setFocus()
 
     def update_display(self):
         checked = self.checkedItems()

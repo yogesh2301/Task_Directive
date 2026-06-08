@@ -19,7 +19,7 @@ import win32com.client
 
 class PDFExporter:
     @staticmethod
-    def export(intro_text, manual_html, scope_text, stakeholders, cert_tasks):
+    def export(intro_text, manual_notes, scope_text, stakeholders, cert_tasks):
         temp_file = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
         temp_path = temp_file.name
         temp_file.close()
@@ -34,12 +34,18 @@ class PDFExporter:
         ct_html = PDFExporter._build_cert_task_table(cert_tasks)
         
         notes_html_blocks = []
-        if isinstance(manual_html, dict):
-            for heading, content in manual_html.items():
+        # Change 1: Support manual notes as either a dict or a plain string.
+        # If a string is passed, convert newline characters to HTML breaks.
+        if isinstance(manual_notes, dict):
+            for heading, content in manual_notes.items():
                 if content:
-                    notes_html_blocks.append(f"<h3>{heading}</h3>{content}")
+                    block = str(content)
+                    if not block.strip().startswith("<"):
+                        block = block.replace('\n', '<br>')
+                    notes_html_blocks.append(f"<h3>{heading}</h3>{block}")
         else:
-            notes_html_blocks.append(str(manual_html))
+            notes_html = str(manual_notes)
+            notes_html_blocks.append(notes_html.replace('\n', '<br>'))
         notes_section = "".join(notes_html_blocks)
         
         final_html = f"""
@@ -86,9 +92,72 @@ class PDFExporter:
 
 class DocxExporter:
     @staticmethod
-    def export(save_path, project_name, intro_text, manual_notes, 
-               scope_items, stakeholders, cert_tasks, combos,
-               annexure3_image_path=None, table_data=None):
+    def export(save_path, **kwargs):
+        """
+        Export document to DOCX format.
+        
+        Args:
+            save_path: Path to save the DOCX file
+            **kwargs: Any attributes to include in the document:
+                - project_name: Name of the project
+                - intro_text: Introduction text
+                - manual_notes: Manual notes (dict or string)
+                - scope_items: Scope items (list)
+                - stakeholders: Stakeholders data (list)
+                - cert_tasks: Certification tasks (list)
+                - combos: Combo selections (dict)
+                - annexure3_image_path: Path to annexure 3 image
+                - table_data: Table data (dict) OR individual kwargs:
+                    - issue_details: Issue details (dict)
+                    - annexure1_data: Annexure 1 data (list)
+                    - annexure2_data: Annexure 2 data (list)
+                    - test_rigs_data: Test rigs data (list)
+                    - aircraft_checks_data: Aircraft checks data (list)
+                - Any other custom attributes
+        """
+        # Change 2: Modified to accept **kwargs instead of fixed parameters for flexibility
+        # Extract known parameters with defaults
+        project_name = kwargs.get('project_name', '')
+        intro_text = kwargs.get('intro_text', '')
+        manual_notes = kwargs.get('manual_notes', {})
+        if isinstance(manual_notes, str):
+            # CHANGED: Allow string manual notes as a single fallback field
+            manual_notes = {"Other": manual_notes}
+        scope_items = kwargs.get('scope_items', [])
+        stakeholders = kwargs.get('stakeholders', [])
+        cert_tasks = kwargs.get('cert_tasks', [])
+        combos = kwargs.get('combos', {})
+        annexure3_image_path = kwargs.get('annexure3_image_path', None)
+        
+        # Change 3: Handle table_data - can be passed directly or built from individual kwargs
+        # This allows flexibility in how data is passed to the exporter
+        table_data = kwargs.get('table_data', {})
+        if not table_data:
+            # Change 4: Build table_data from individual data kwargs for better API
+            # Maps individual parameters to the internal table_data structure
+            table_data = {
+                "issue_details": kwargs.get('issue_details', {}),
+                "annexure1": kwargs.get('annexure1_data', []),
+                "annexure2": kwargs.get('annexure2_data', []),
+                "test_rigs": kwargs.get('test_rigs_data', []),
+                "aircraft_checks": kwargs.get('aircraft_checks_data', []),
+            }
+        
+        # Change 5: Define known parameters for exclusion from custom_attributes
+        # Allows any additional custom kwargs to be passed through
+        known_params = {
+            'project_name', 'intro_text', 'manual_notes', 
+            'scope_items', 'stakeholders', 'cert_tasks', 
+            'combos', 'annexure3_image_path', 'table_data',
+            'issue_details', 'annexure1_data', 'annexure2_data',
+            'test_rigs_data', 'aircraft_checks_data'
+        }
+        
+        # Change 6: Store any extra custom attributes for extensibility
+        # Custom attributes can be added without modifying the function signature
+        custom_attributes = {k: v for k, v in kwargs.items() 
+                            if k not in known_params}
+        
         table_data = table_data or {}
         doc = Document()
         style = doc.styles['Normal']
@@ -109,16 +178,15 @@ class DocxExporter:
         
         DocxExporter._add_content_sections(
             doc, intro_text, manual_notes, scope_items,
-            stakeholders, cert_tasks, combos, annexure3_image_path, table_data
+            stakeholders, cert_tasks, combos, annexure3_image_path, 
+            table_data, custom_attributes
         )
         DocxExporter._apply_document_spacing(doc)
         
         doc.save(save_path)
 
     @staticmethod
-    def create_temp_docx(project_name, intro_text, manual_notes,
-                         scope_items, stakeholders, cert_tasks, combos,
-                         annexure3_image_path=None, table_data=None):
+    def create_temp_docx(**kwargs):
         """Build the same DOCX content as the final export, but into a temp file.
 
         Use this for Preview so the user does not need to choose/download
@@ -128,28 +196,21 @@ class DocxExporter:
         temp_path = temp_file.name
         temp_file.close()
 
-        DocxExporter.export(
-            temp_path,
-            project_name, intro_text, manual_notes,
-            scope_items, stakeholders, cert_tasks, combos,
-            annexure3_image_path, table_data
-        )
+        # CHANGED: Forward **kwargs instead of individual parameters
+        # Maintains flexibility in how data is passed to export()
+        DocxExporter.export(temp_path, **kwargs)
         return temp_path
 
     @staticmethod
-    def create_preview_pdf(project_name, intro_text, manual_notes,
-                           scope_items, stakeholders, cert_tasks, combos,
-                           annexure3_image_path=None, table_data=None):
+    def create_preview_pdf(**kwargs):
         """Create a PDF preview from a temporary DOCX and return the PDF path.
 
         This intentionally does not write the user's final .docx file. It lets
         the Preview button show the generated document before final download.
         """
-        temp_docx_path = DocxExporter.create_temp_docx(
-            project_name, intro_text, manual_notes,
-            scope_items, stakeholders, cert_tasks, combos,
-            annexure3_image_path, table_data
-        )
+        # CHANGED: Forward **kwargs to create_temp_docx for consistency
+        # This keeps the preview path in sync with the current export API.
+        temp_docx_path = DocxExporter.create_temp_docx(**kwargs)
         temp_pdf_file = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
         temp_pdf_path = temp_pdf_file.name
         temp_pdf_file.close()
@@ -312,8 +373,11 @@ class DocxExporter:
     @staticmethod
     def _add_content_sections(doc, intro_text, manual_notes, scope_items,
                               stakeholders, cert_tasks, combos,
-                              annexure3_image_path=None, table_data=None):
+                              annexure3_image_path=None, table_data=None,
+                              custom_attributes=None):
+        # CHANGED: Added custom_attributes parameter to support extensibility
         table_data = table_data or {}
+        custom_attributes = custom_attributes or {}
         if not isinstance(manual_notes, dict):
             manual_notes = {"Other": str(manual_notes)}
         
