@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 import pytesseract
 from PyQt6.QtGui import QImage
+from .project_name import infer_project_name
 
 # Change 13: Add optional transformer-based summarization support for selected text.
 # This enables the app to use an advanced BART + grammar correction model when installed,
@@ -268,10 +269,11 @@ class AnalysisWorker(QThread):
     error = pyqtSignal(str)
     status = pyqtSignal(str)
 
-    def __init__(self, text, topics):
+    def __init__(self, text, topics, pdf_handler=None):
         super().__init__()
         self.text = text
         self.topics = topics
+        self.pdf_handler = pdf_handler
         # Pre-split lines once for efficiency
         self._lines = [l.strip() for l in text.split('\n') if l.strip()]
 
@@ -294,7 +296,7 @@ class AnalysisWorker(QThread):
             
             self.status.emit("Parsing Document Structure...")
 
-            # Extract project name
+            # Extract project name using layered heuristics
             explicit_match = re.search(
                 r'(?:Project\s*Name|Project\s*Title|Title|Subject)[\s:]*(.+)',
                 self.text, re.IGNORECASE
@@ -303,6 +305,19 @@ class AnalysisWorker(QThread):
                 results["project_name"] = self.clean_extracted_name(
                     explicit_match.group(1).strip()[:100]
                 )
+
+            if not results["project_name"]:
+                try:
+                    # If a PDF handler is available, use full inference (may scan page spans).
+                    if getattr(self, 'pdf_handler', None) and getattr(self.pdf_handler, 'doc', None):
+                        pn = infer_project_name(self.text, pdf_handler=self.pdf_handler, quick=False)
+                    else:
+                        pn = infer_project_name(self.text, quick=True)
+
+                    if pn:
+                        results["project_name"] = self.clean_extracted_name(pn[:100])
+                except Exception:
+                    pass
 
             # Extract introduction
             intro_text = self._extract_introduction()
@@ -566,6 +581,23 @@ class FileDetailsWorker(QThread):
                 full_ocr_text += "\n\n" + combined
 
             details = self.extract_details(full_ocr_text)
+
+            # If OCR-based extraction didn't find a good project name, try the layered inference
+            try:
+                # Prefer full PDF-based inference when possible so large title spans
+                # override short/incorrect OCR extracts (e.g., stray words like 'matter').
+                if getattr(self, 'pdf_handler', None) and getattr(self.pdf_handler, 'doc', None):
+                    pn = infer_project_name(full_ocr_text, pdf_handler=self.pdf_handler, quick=False)
+                else:
+                    pn = infer_project_name(full_ocr_text, quick=True)
+
+                if pn and pn.lower() not in {"not found", ""}:
+                    current = (details.get("project_name") or "").strip()
+                    # override when current is missing/placeholder or new candidate is substantially longer
+                    if current.lower() in {"not found", ""} or len(pn) > max(12, len(current) + 5):
+                        details["project_name"] = pn
+            except Exception:
+                pass
 
             details["has_signature"] = signature_found
 

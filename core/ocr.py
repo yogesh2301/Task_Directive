@@ -3,6 +3,7 @@ import pytesseract
 import fitz
 import numpy as np
 import cv2
+from .constants import GARBAGE_WORDS, PROJECT_NAME_MIN_LENGTH, PROJECT_NAME_MIN_WORDS
 
 def pixmap_to_rgb_array(pix):
     samples = np.frombuffer(pix.samples, dtype=np.uint8)
@@ -52,8 +53,6 @@ def render_pdf_region(page, pdf_rect, dpi=500, max_pixels=24000000):
 
 
 def _deskew(gray):
-    
-
     coords = np.column_stack(np.where(gray < 245))
     if coords.size == 0:
         return gray
@@ -219,10 +218,24 @@ def _looks_like_project_label(line):
 
 def _is_project_candidate(line):
     value = _clean_field_value(line)
-    if not value or len(value) < 2:
+    if not value or len(value) < 5:
         return False
 
     lower = value.lower()
+
+    # Reject single words — a project name needs at least 2 words
+    words = re.findall(r"[A-Za-z]{2,}", value)
+    if len(words) < 2:
+        return False
+
+    # Reject known garbage values
+    if lower in GARBAGE_WORDS:
+        return False
+    
+    # Also reject single words that are garbage
+    if all(w.lower() in GARBAGE_WORDS for w in words):
+        return False
+
     if _looks_like_project_label(value):
         return False
     if lower.startswith("for ") and "<" in value:
@@ -232,6 +245,15 @@ def _is_project_candidate(line):
     if re.search(r"\b(name|designation|agency|signature|restricted|secret)\b", lower):
         return False
     if re.fullmatch(r"[-_.\s]+", value):
+        return False
+
+    # Reject lines ending in colon (they are labels, not values)
+    if value.strip().endswith(":"):
+        return False
+
+    # Reject lines that are mostly numbers/codes
+    alpha_ratio = sum(c.isalpha() for c in value) / max(len(value), 1)
+    if alpha_ratio < 0.4:
         return False
 
     return bool(re.search(r"[A-Za-z0-9]", value))
@@ -251,7 +273,7 @@ def _extract_project_name_from_lines(text):
             if _is_project_candidate(title_value):
                 return title_value
 
-            for candidate in lines[index + 1:index + 6]:
+            for candidate in lines[index + 1:index + 5]:
                 if _is_project_candidate(candidate):
                     return candidate
 
@@ -330,6 +352,18 @@ def extract_file_details_from_text(text):
     if not project_name or _looks_like_project_label(project_name):
         project_name = _extract_project_name_from_lines(normalized)
 
+    # Reject garbage results so project_name.py heuristics can take over
+    _GARBAGE_SINGLE = {
+        "matter", "subject", "title", "project", "name", "document",
+        "report", "draft", "copy", "note", "notes", "unknown", "untitled",
+        "n/a", "na", "none", "null", "not found", "tbd", "tbc",
+        "page", "sheet", "form", "ref", "reference",
+    }
+    if project_name:
+        words = re.findall(r"[A-Za-z]{2,}", project_name)
+        if len(words) < 2 or project_name.strip().lower() in _GARBAGE_SINGLE:
+            project_name = ""
+
     if project_name:
         results["project_name"] = project_name[:150]
 
@@ -363,7 +397,6 @@ def _text_quality_score(text, confidence):
 
 
 def run_tesseract_ocr(image, lang="eng"):
-    
     variants = build_ocr_variants(image)
     configs = [
         "--oem 3 --psm 6 --dpi 500 -c preserve_interword_spaces=1",

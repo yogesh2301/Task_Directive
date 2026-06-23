@@ -1063,7 +1063,7 @@ class OfflineApp(QMainWindow):
     def start_analysis_thread(self, text):
         self.status_label.setText("Analyzing...")
         self.progress_bar.show()
-        self.worker = AnalysisWorker(text, self.topics)
+        self.worker = AnalysisWorker(text, self.topics, pdf_handler=self.pdf_handler)
         self.worker.finished.connect(self.handle_analysis_done)
         self.worker.status.connect(
             lambda msg: self.status_label.setText(msg)
