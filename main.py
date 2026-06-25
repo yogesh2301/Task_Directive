@@ -1,8 +1,8 @@
 import os
 import sys
 
-from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import QApplication
 
 from ui.main_window import OfflineApp
 from ui.styles import get_light_theme

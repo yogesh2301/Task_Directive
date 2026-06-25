@@ -184,9 +184,10 @@ GENERIC_TAB_CONFIGS = {
     "annexure1_data": [
         ("Certifiable Item", "certifiable_item"),
         ("Design Agency", "design_agency"),
-        ("Applicable Subpart", "applicable_subpart"),
         ("Designated Directorate/RCMA", "designated_directorate"),
-        ("Dealing Officer(s)", "dealing_officers"),
+        ("Dealing Officer HW", "dealing_officer_hw"),
+        ("Dealing Officer CH", "dealing_officer_ch"),
+        ("Dealing Officer SW", "dealing_officer_sw"),
     ],
     "test_rigs_data": [
         ("Test Rig / Ground Equipment Name", "test_rig_name"),
@@ -285,23 +286,10 @@ class ProjectTablesDialog(QDialog):
         self._create_stakeholders_tab()
         self._create_cert_task_tab()
 
-        # CHANGE 6: emp_fill_map argument removed — these three tabs now get
-        # plain text input rows with no employee selector bar.
-        self._create_generic_table_tab(
-            "Annexure-1",
-            "annexure1_data",
-            "Work Assignment List of LRUs",
-        )
-        self._create_generic_table_tab(
-            "Test Rigs",
-            "test_rigs_data",
-            "Test Rigs, Simulators and Ground Equipment Required",
-        )
-        self._create_generic_table_tab(
-            "Aircraft Checks",
-            "aircraft_checks_data",
-            "Aircraft Integration Checks and Flight Clearance",
-        )
+        # RCMA + Dealing Officer dropdowns — dedicated tab methods
+        self._create_annexure1_tab()
+        self._create_test_rigs_tab()
+        self._create_aircraft_checks_tab()
 
         # CHANGE 7: Annexure-2 now uses its own dedicated method instead of
         # the generic one, so that it can embed employee dropdowns directly
@@ -787,6 +775,364 @@ class ProjectTablesDialog(QDialog):
             # registered under "annexure2_data" in self.generic_tables and
             # GENERIC_TAB_CONFIGS["annexure2_data"] has the correct key mapping.
             self.refresh_generic_table("annexure2_data")
+
+    # =========================================================================
+    # Annexure-1 tab — dedicated method with RCMA + Dealing Officer dropdowns
+    # Columns: Certifiable Item | Design Agency | Applicable Subpart |
+    #          Designated Directorate/RCMA (combo) | Dealing Officer(s) (combo)
+    # =========================================================================
+    def _create_annexure1_tab(self):
+        data_attr = "annexure1_data"
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.addWidget(QLabel("Work Assignment List of LRUs"))
+
+        # ── Row 1: Certifiable Item | Design Agency | RCMA combo ──────────
+        row1 = QHBoxLayout()
+
+        self._a1_item_field = QLineEdit()
+        self._a1_item_field.setPlaceholderText("Certifiable Item")
+        self._a1_agency_field = QLineEdit()
+        self._a1_agency_field.setPlaceholderText("Design Agency")
+
+        # RCMA dropdown — filters all three Dealing Officer combos below
+        self._a1_rcma_combo = QComboBox()
+        self._a1_rcma_combo.setEditable(True)
+        self._a1_rcma_combo.setMinimumWidth(130)
+        self._a1_rcma_combo.addItem("— RCMA —")
+        self._a1_rcma_combo.addItems(self._all_depts)
+
+        row1.addWidget(self._a1_item_field, stretch=2)
+        row1.addWidget(self._a1_agency_field, stretch=2)
+        row1.addWidget(self._a1_rcma_combo, stretch=2)
+        layout.addLayout(row1)
+
+        # ── Row 2: HW / CH / SW officer combos + Add button ──────────────
+        row2 = QHBoxLayout()
+
+        self._a1_officer_hw_combo = QComboBox()
+        self._a1_officer_hw_combo.setEditable(True)
+        self._a1_officer_ch_combo = QComboBox()
+        self._a1_officer_ch_combo.setEditable(True)
+        self._a1_officer_sw_combo = QComboBox()
+        self._a1_officer_sw_combo.setEditable(True)
+
+        _OFFICER_COMBOS = [
+            (self._a1_officer_hw_combo, "— DO (HW) —"),
+            (self._a1_officer_ch_combo, "— DO (CH) —"),
+            (self._a1_officer_sw_combo, "— DO (SW) —"),
+        ]
+
+        def _a1_populate_officers(dept_text):
+            pool = (
+                self._all_employees
+                if dept_text in ("— RCMA —", "All Depts")
+                else self._emp_by_dept.get(dept_text, [])
+            )
+            for combo, placeholder in _OFFICER_COMBOS:
+                combo.blockSignals(True)
+                combo.clear()
+                combo.addItem(placeholder)
+                for emp in pool:
+                    combo.addItem(emp[1], userData=emp)
+                combo.blockSignals(False)
+
+        self._a1_rcma_combo.currentTextChanged.connect(_a1_populate_officers)
+        _a1_populate_officers("— RCMA —")
+
+        add_btn = QPushButton("Add Row")
+        add_btn.setObjectName("PrimaryBtn")
+        add_btn.clicked.connect(self._add_annexure1_row)
+
+        row2.addWidget(QLabel("HW:"))
+        row2.addWidget(self._a1_officer_hw_combo, stretch=2)
+        row2.addWidget(QLabel("CH:"))
+        row2.addWidget(self._a1_officer_ch_combo, stretch=2)
+        row2.addWidget(QLabel("SW:"))
+        row2.addWidget(self._a1_officer_sw_combo, stretch=2)
+        row2.addWidget(add_btn)
+        layout.addLayout(row2)
+
+        # ── Table: 7 columns (Sl No. + 6 data) ───────────────────────────
+        table = QTableWidget(0, 7)
+        table.setHorizontalHeaderLabels(
+            [
+                "Sl No.",
+                "Certifiable Item",
+                "Design Agency",
+                "Designated Directorate/RCMA",
+                "Dealing Officer HW",
+                "Dealing Officer CH",
+                "Dealing Officer SW",
+            ]
+        )
+        self._configure_table(table)
+        table.cellChanged.connect(
+            lambda row, col: self.on_generic_cell_changed(data_attr, row, col)
+        )
+        self.generic_tables[data_attr] = table
+        layout.addWidget(table)
+        layout.addLayout(
+            self._row_action_layout(
+                lambda: self.delete_selected_generic(data_attr),
+                lambda: self.clear_all_generic(data_attr),
+            )
+        )
+        self.tabs.addTab(tab, "Annexure-1")
+
+    def _add_annexure1_row(self):
+        item = self._a1_item_field.text().strip()
+        agency = self._a1_agency_field.text().strip()
+        rcma = self._a1_rcma_combo.currentText().strip()
+
+        def _officer(combo, placeholder):
+            v = combo.currentText().strip()
+            return "" if v == placeholder else v
+
+        officer_hw = _officer(self._a1_officer_hw_combo, "— DO (HW) —")
+        officer_ch = _officer(self._a1_officer_ch_combo, "— DO (CH) —")
+        officer_sw = _officer(self._a1_officer_sw_combo, "— DO (SW) —")
+
+        if rcma == "— RCMA —":
+            rcma = ""
+
+        if any([item, agency, rcma, officer_hw, officer_ch, officer_sw]):
+            self.parent_app.annexure1_data.append(
+                {
+                    "certifiable_item": item,
+                    "design_agency": agency,
+                    "designated_directorate": rcma,
+                    "dealing_officer_hw": officer_hw,
+                    "dealing_officer_ch": officer_ch,
+                    "dealing_officer_sw": officer_sw,
+                }
+            )
+            self._a1_item_field.clear()
+            self._a1_agency_field.clear()
+            self._a1_rcma_combo.setCurrentIndex(0)
+            for combo in [
+                self._a1_officer_hw_combo,
+                self._a1_officer_ch_combo,
+                self._a1_officer_sw_combo,
+            ]:
+                combo.setCurrentIndex(0)
+            self.refresh_generic_table("annexure1_data")
+
+    # =========================================================================
+    # Test Rigs tab — dedicated method with RCMA + Dealing Officer dropdowns
+    # Columns: Test Rig Name | Utilization Phase | Design Agency |
+    #          Designated RCMA (combo) | Dealing Officer (combo)
+    # =========================================================================
+    def _create_test_rigs_tab(self):
+        data_attr = "test_rigs_data"
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.addWidget(QLabel("Test Rigs, Simulators and Ground Equipment Required"))
+
+        input_layout = QHBoxLayout()
+
+        self._tr_name_field = QLineEdit()
+        self._tr_name_field.setPlaceholderText("Test Rig / Ground Equipment Name")
+        self._tr_phase_field = QLineEdit()
+        self._tr_phase_field.setPlaceholderText("Utilizations Phase")
+        self._tr_agency_field = QLineEdit()
+        self._tr_agency_field.setPlaceholderText("Design Agency")
+
+        self._tr_rcma_combo = QComboBox()
+        self._tr_rcma_combo.setEditable(True)
+        self._tr_rcma_combo.setMinimumWidth(130)
+        self._tr_rcma_combo.addItem("\u2014 RCMA \u2014")
+        self._tr_rcma_combo.addItems(self._all_depts)
+
+        self._tr_officer_combo = QComboBox()
+        self._tr_officer_combo.setEditable(True)
+        self._tr_officer_combo.setMinimumWidth(180)
+
+        def _tr_populate_officers(dept_text):
+            self._tr_officer_combo.blockSignals(True)
+            self._tr_officer_combo.clear()
+            self._tr_officer_combo.addItem("\u2014 Dealing Officer \u2014")
+            pool = (
+                self._all_employees
+                if dept_text in ("\u2014 RCMA \u2014", "All Depts")
+                else self._emp_by_dept.get(dept_text, [])
+            )
+            for emp in pool:
+                self._tr_officer_combo.addItem(emp[1], userData=emp)
+            self._tr_officer_combo.blockSignals(False)
+
+        self._tr_rcma_combo.currentTextChanged.connect(_tr_populate_officers)
+        _tr_populate_officers("\u2014 RCMA \u2014")
+
+        add_btn = QPushButton("Add Row")
+        add_btn.setObjectName("PrimaryBtn")
+        add_btn.clicked.connect(self._add_test_rigs_row)
+
+        input_layout.addWidget(self._tr_name_field, stretch=2)
+        input_layout.addWidget(self._tr_phase_field, stretch=2)
+        input_layout.addWidget(self._tr_agency_field, stretch=2)
+        input_layout.addWidget(self._tr_rcma_combo, stretch=2)
+        input_layout.addWidget(self._tr_officer_combo, stretch=2)
+        input_layout.addWidget(add_btn)
+        layout.addLayout(input_layout)
+
+        table = QTableWidget(0, 6)
+        table.setHorizontalHeaderLabels(
+            [
+                "Sl No.",
+                "Test Rig / Ground Equipment Name",
+                "Utilizations Phase",
+                "Design Agency",
+                "Designated RCMA",
+                "Dealing Officer",
+            ]
+        )
+        self._configure_table(table)
+        table.cellChanged.connect(
+            lambda row, col: self.on_generic_cell_changed(data_attr, row, col)
+        )
+        self.generic_tables[data_attr] = table
+        layout.addWidget(table)
+        layout.addLayout(
+            self._row_action_layout(
+                lambda: self.delete_selected_generic(data_attr),
+                lambda: self.clear_all_generic(data_attr),
+            )
+        )
+        self.tabs.addTab(tab, "Test Rigs")
+
+    def _add_test_rigs_row(self):
+        name = self._tr_name_field.text().strip()
+        phase = self._tr_phase_field.text().strip()
+        agency = self._tr_agency_field.text().strip()
+        rcma = self._tr_rcma_combo.currentText().strip()
+        officer = self._tr_officer_combo.currentText().strip()
+        if rcma == "\u2014 RCMA \u2014":
+            rcma = ""
+        if officer == "\u2014 Dealing Officer \u2014":
+            officer = ""
+        if any([name, phase, agency, rcma, officer]):
+            self.parent_app.test_rigs_data.append(
+                {
+                    "test_rig_name": name,
+                    "utilization_phase": phase,
+                    "design_agency": agency,
+                    "designated_rcma": rcma,
+                    "dealing_officer": officer,
+                }
+            )
+            self._tr_name_field.clear()
+            self._tr_phase_field.clear()
+            self._tr_agency_field.clear()
+            self._tr_rcma_combo.setCurrentIndex(0)
+            self._tr_officer_combo.setCurrentIndex(0)
+            self.refresh_generic_table("test_rigs_data")
+
+    # =========================================================================
+    # Aircraft Checks tab — dedicated method with RCMA + Dealing Officer dropdowns
+    # Columns: System Name | Design Agency |
+    #          Designated RCMA (combo) | Dealing Officer (combo)
+    # =========================================================================
+    def _create_aircraft_checks_tab(self):
+        data_attr = "aircraft_checks_data"
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.addWidget(QLabel("Aircraft Integration Checks and Flight Clearance"))
+
+        input_layout = QHBoxLayout()
+
+        self._ac_system_field = QLineEdit()
+        self._ac_system_field.setPlaceholderText("System Name")
+        self._ac_agency_field = QLineEdit()
+        self._ac_agency_field.setPlaceholderText("Design Agency")
+
+        self._ac_rcma_combo = QComboBox()
+        self._ac_rcma_combo.setEditable(True)
+        self._ac_rcma_combo.setMinimumWidth(130)
+        self._ac_rcma_combo.addItem("\u2014 RCMA \u2014")
+        self._ac_rcma_combo.addItems(self._all_depts)
+
+        self._ac_officer_combo = QComboBox()
+        self._ac_officer_combo.setEditable(True)
+        self._ac_officer_combo.setMinimumWidth(180)
+
+        def _ac_populate_officers(dept_text):
+            self._ac_officer_combo.blockSignals(True)
+            self._ac_officer_combo.clear()
+            self._ac_officer_combo.addItem("\u2014 Dealing Officer \u2014")
+            pool = (
+                self._all_employees
+                if dept_text in ("\u2014 RCMA \u2014", "All Depts")
+                else self._emp_by_dept.get(dept_text, [])
+            )
+            for emp in pool:
+                self._ac_officer_combo.addItem(emp[1], userData=emp)
+            self._ac_officer_combo.blockSignals(False)
+
+        self._ac_rcma_combo.currentTextChanged.connect(_ac_populate_officers)
+        _ac_populate_officers("\u2014 RCMA \u2014")
+
+        add_btn = QPushButton("Add Row")
+        add_btn.setObjectName("PrimaryBtn")
+        add_btn.clicked.connect(self._add_aircraft_checks_row)
+
+        input_layout.addWidget(self._ac_system_field, stretch=2)
+        input_layout.addWidget(self._ac_agency_field, stretch=2)
+        input_layout.addWidget(self._ac_rcma_combo, stretch=2)
+        input_layout.addWidget(self._ac_officer_combo, stretch=2)
+        input_layout.addWidget(add_btn)
+        layout.addLayout(input_layout)
+
+        table = QTableWidget(0, 5)
+        table.setHorizontalHeaderLabels(
+            [
+                "Sl No.",
+                "System Name",
+                "Design Agency",
+                "Designated RCMA",
+                "Dealing Officer",
+            ]
+        )
+        self._configure_table(table)
+        table.cellChanged.connect(
+            lambda row, col: self.on_generic_cell_changed(data_attr, row, col)
+        )
+        self.generic_tables[data_attr] = table
+        layout.addWidget(table)
+        layout.addLayout(
+            self._row_action_layout(
+                lambda: self.delete_selected_generic(data_attr),
+                lambda: self.clear_all_generic(data_attr),
+            )
+        )
+        self.tabs.addTab(tab, "Aircraft Checks")
+
+    def _add_aircraft_checks_row(self):
+        system = self._ac_system_field.text().strip()
+        agency = self._ac_agency_field.text().strip()
+        rcma = self._ac_rcma_combo.currentText().strip()
+        officer = self._ac_officer_combo.currentText().strip()
+        if rcma == "\u2014 RCMA \u2014":
+            rcma = ""
+        if officer == "\u2014 Dealing Officer \u2014":
+            officer = ""
+        if any([system, agency, rcma, officer]):
+            self.parent_app.aircraft_checks_data.append(
+                {
+                    "system_name": system,
+                    "design_agency": agency,
+                    "designated_rcma": rcma,
+                    "dealing_officer": officer,
+                }
+            )
+            self._ac_system_field.clear()
+            self._ac_agency_field.clear()
+            self._ac_rcma_combo.setCurrentIndex(0)
+            self._ac_officer_combo.setCurrentIndex(0)
+            self.refresh_generic_table("aircraft_checks_data")
 
     # =========================================================================
     # Shared table configuration helpers — unchanged from original

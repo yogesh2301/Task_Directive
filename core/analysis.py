@@ -1,15 +1,16 @@
 import re
-import requests
-from PyQt6.QtCore import QThread, pyqtSignal
+
+import cv2
 import fitz
 import numpy as np
+import pytesseract
+import requests
+from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtGui import QImage
 
 from core.ocr import extract_file_details_from_text
 from core.signature import detect_signature_in_image, document_has_valid_signature
-import cv2
-import numpy as np
-import pytesseract
-from PyQt6.QtGui import QImage
+
 from .project_name import infer_project_name
 
 # Change 13: Add optional transformer-based summarization support for selected text.
@@ -17,7 +18,8 @@ from .project_name import infer_project_name
 # while preserving the existing local summarizer fallback when dependencies are missing.
 try:
     import torch
-    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
     HAS_TRANSFORMERS = True
 except ImportError:
     torch = None
@@ -29,7 +31,8 @@ SUMMARIZER_MODEL = "facebook/bart-large-cnn"
 GRAMMAR_MODEL = "vennify/t5-base-grammar-correction"
 _device = (
     torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if HAS_TRANSFORMERS else None
+    if HAS_TRANSFORMERS
+    else None
 )
 
 _sum_tok = None
@@ -37,43 +40,64 @@ _sum_model = None
 _gram_tok = None
 _gram_model = None
 
+
 def simple_summarize(text, target_ratio=0.5, min_sentences=10, max_sentences=15):
     if not text or len(text.strip()) < 20:
         return text.strip()
-    
-    clean_text = re.sub(r'(?<!\n)\n(?!\n)', ' ', text)
-    sentences = re.split(r'(?<=[.!?])\s+', clean_text)
+
+    clean_text = re.sub(r"(?<!\n)\n(?!\n)", " ", text)
+    sentences = re.split(r"(?<=[.!?])\s+", clean_text)
     sentences = [s.strip() for s in sentences if len(s.strip()) > 10]
-    
+
     if not sentences:
         return ""
-    
+
     num_sentences = int(len(sentences) * target_ratio)
     num_sentences = max(min_sentences, min(num_sentences, max_sentences))
-    
+
     if len(sentences) <= num_sentences:
         return " ".join(sentences)
-    
+
     stop_words = {
-        "the", "is", "in", "and", "to", "of", "a", "for", 
-        "on", "with", "as", "by", "this", "that", "it", 
-        "are", "be", "or", "an", "at", "from", "which", "will"
+        "the",
+        "is",
+        "in",
+        "and",
+        "to",
+        "of",
+        "a",
+        "for",
+        "on",
+        "with",
+        "as",
+        "by",
+        "this",
+        "that",
+        "it",
+        "are",
+        "be",
+        "or",
+        "an",
+        "at",
+        "from",
+        "which",
+        "will",
     }
-    
-    words = re.findall(r'\b[a-zA-Z]{2,}\b', clean_text.lower())
+
+    words = re.findall(r"\b[a-zA-Z]{2,}\b", clean_text.lower())
     freq = {}
     for w in words:
         if w not in stop_words:
             freq[w] = freq.get(w, 0) + 1
-    
+
     max_freq = max(freq.values()) if freq else 1
     for w in freq:
         freq[w] = freq[w] / max_freq
-    
+
     scores = {}
     for i, s in enumerate(sentences):
         score = 0
-        s_words = re.findall(r'\b[a-zA-Z]{2,}\b', s.lower())
+        s_words = re.findall(r"\b[a-zA-Z]{2,}\b", s.lower())
         for w in s_words:
             if w in freq:
                 score += freq[w]
@@ -81,10 +105,8 @@ def simple_summarize(text, target_ratio=0.5, min_sentences=10, max_sentences=15)
         if i < 2:
             score += 0.5
         scores[i] = score
-    
-    top_indices = sorted(
-        sorted(scores, key=scores.get, reverse=True)[:num_sentences]
-    )
+
+    top_indices = sorted(sorted(scores, key=scores.get, reverse=True)[:num_sentences])
     return " ".join([sentences[i] for i in top_indices])
 
 
@@ -183,7 +205,7 @@ class SummarizationWorker(QThread):
 # keywords must appear on a short standalone line (heading), not in body text.
 #
 # "heading-only" topics use _heading_found_in_text() — strict line check.
-# "anywhere" topics (like Signatures) use _keywords_found_in_window() 
+# "anywhere" topics (like Signatures) use _keywords_found_in_window()
 #   since signatures appear in tables, not as headings.
 # ---------------------------------------------------------------------------
 TOPIC_ALIASES = {
@@ -257,10 +279,10 @@ HEADING_MAX_LEN = 80
 
 # Heading must not contain these patterns (sentence indicators)
 HEADING_BODY_PATTERNS = [
-    r'\b(is|are|was|were|has|have|had|will|would|can|could|should|may|might)\b',
-    r'[,;]',           # commas/semicolons suggest body text
-    r'\b(if|when|because|although|however|therefore|thus)\b',
-    r'•',              # bullet points
+    r"\b(is|are|was|were|has|have|had|will|would|can|could|should|may|might)\b",
+    r"[,;]",  # commas/semicolons suggest body text
+    r"\b(if|when|because|although|however|therefore|thus)\b",
+    r"•",  # bullet points
 ]
 
 
@@ -275,31 +297,28 @@ class AnalysisWorker(QThread):
         self.topics = topics
         self.pdf_handler = pdf_handler
         # Pre-split lines once for efficiency
-        self._lines = [l.strip() for l in text.split('\n') if l.strip()]
+        self._lines = [l.strip() for l in text.split("\n") if l.strip()]
 
     def clean_extracted_name(self, name):
         if not name:
             return ""
-        name = name.strip(' "\'\t\n\r')
-        name = re.sub(r'^[a-zA-Z]\s*["\']\s*', '', name)
-        name = re.sub(r'^[a-zA-Z]\s+', '', name)
-        name = re.sub(r'^[^a-zA-Z0-9]+', '', name)
-        return name.strip(' "\'')
+        name = name.strip(" \"'\t\n\r")
+        name = re.sub(r'^[a-zA-Z]\s*["\']\s*', "", name)
+        name = re.sub(r"^[a-zA-Z]\s+", "", name)
+        name = re.sub(r"^[^a-zA-Z0-9]+", "", name)
+        return name.strip(" \"'")
 
     def run(self):
         try:
-            results = {
-                "project_name": "", 
-                "introduction": "", 
-                "found_topics": []
-            }
-            
+            results = {"project_name": "", "introduction": "", "found_topics": []}
+
             self.status.emit("Parsing Document Structure...")
 
             # Extract project name using layered heuristics
             explicit_match = re.search(
-                r'(?:Project\s*Name|Project\s*Title|Title|Subject)[\s:]*(.+)',
-                self.text, re.IGNORECASE
+                r"(?:Project\s*Name|Project\s*Title|Title|Subject)[\s:]*(.+)",
+                self.text,
+                re.IGNORECASE,
             )
             if explicit_match and not explicit_match.group(1).strip().startswith("___"):
                 results["project_name"] = self.clean_extracted_name(
@@ -309,8 +328,12 @@ class AnalysisWorker(QThread):
             if not results["project_name"]:
                 try:
                     # If a PDF handler is available, use full inference (may scan page spans).
-                    if getattr(self, 'pdf_handler', None) and getattr(self.pdf_handler, 'doc', None):
-                        pn = infer_project_name(self.text, pdf_handler=self.pdf_handler, quick=False)
+                    if getattr(self, "pdf_handler", None) and getattr(
+                        self.pdf_handler, "doc", None
+                    ):
+                        pn = infer_project_name(
+                            self.text, pdf_handler=self.pdf_handler, quick=False
+                        )
                     else:
                         pn = infer_project_name(self.text, quick=True)
 
@@ -334,16 +357,13 @@ class AnalysisWorker(QThread):
                     if self._topic_found_in_text(topic, self.text):
                         results["found_topics"].append(topic)
 
-            # Try AI summarization
-            if intro_text:
-                results["introduction"] = self._try_ai_summarization(
-                    intro_text, intro_is_short
-                )
-            else:
-                results["introduction"] = "No explicit 'Introduction' section found."
+            # Return the raw extracted introduction — do NOT summarize or rewrite.
+            # The UI will display this verbatim so the user can review and edit it
+            # before generating the PDF.
+            results["introduction"] = intro_text if intro_text else ""
 
             self.finished.emit(results)
-            
+
         except Exception as e:
             self.error.emit(str(e))
 
@@ -356,8 +376,8 @@ class AnalysisWorker(QThread):
         - Optionally starts with a number like "1." or "1.1"
         """
         # Strip leading numbering like "1.", "7.2", "A."
-        core = re.sub(r'^[\d]+[\d.]*\s+', '', line).strip()
-        core = re.sub(r'^[A-Z]\.\s+', '', core).strip()
+        core = re.sub(r"^[\d]+[\d.]*\s+", "", line).strip()
+        core = re.sub(r"^[A-Z]\.\s+", "", core).strip()
 
         if len(core) > HEADING_MAX_LEN:
             return False
@@ -377,7 +397,7 @@ class AnalysisWorker(QThread):
             if not self._is_heading_line(line):
                 continue
             if all(
-                re.search(r'\b' + re.escape(k) + r'\b', line, re.IGNORECASE)
+                re.search(r"\b" + re.escape(k) + r"\b", line, re.IGNORECASE)
                 for k in keyword_set
             ):
                 return True
@@ -391,9 +411,9 @@ class AnalysisWorker(QThread):
         if not keywords:
             return False
         for match in re.finditer(re.escape(keywords[0]), text, re.IGNORECASE):
-            snippet = text[match.start(): match.start() + window]
+            snippet = text[match.start() : match.start() + window]
             if all(
-                re.search(r'\b' + re.escape(k) + r'\b', snippet, re.IGNORECASE)
+                re.search(r"\b" + re.escape(k) + r"\b", snippet, re.IGNORECASE)
                 for k in keywords[1:]
             ):
                 return True
@@ -423,20 +443,19 @@ class AnalysisWorker(QThread):
 
         # --- Fallback: no alias entry, use separator-flexible regex ---
         FILLERS = {"and", "or", "the", "of", "to", "in", "for"}
-        raw_words = re.split(r'[\s\-_&/,]+', topic)
+        raw_words = re.split(r"[\s\-_&/,]+", topic)
         keywords = [w for w in raw_words if w and w.lower() not in FILLERS]
 
         if not keywords:
             return False
 
         if len(keywords) == 1:
-            return bool(re.search(
-                r'\b' + re.escape(keywords[0]) + r'\b',
-                text, re.IGNORECASE
-            ))
+            return bool(
+                re.search(r"\b" + re.escape(keywords[0]) + r"\b", text, re.IGNORECASE)
+            )
 
         # Try separator-flexible pattern
-        sep = r'[\s\-_&/,]+(?:and\s+|or\s+)?'
+        sep = r"[\s\-_&/,]+(?:and\s+|or\s+)?"
         pattern = sep.join(re.escape(k) for k in keywords)
         if re.search(pattern, text, re.IGNORECASE):
             return True
@@ -445,7 +464,7 @@ class AnalysisWorker(QThread):
         return self._keywords_found_in_window(keywords, text, window=80)
 
     def _extract_introduction(self):
-        lines = self.text.split('\n')
+        lines = self.text.split("\n")
         intro_lines = []
         capturing = False
 
@@ -456,15 +475,14 @@ class AnalysisWorker(QThread):
 
             if not capturing:
                 is_intro_heading = re.match(
-                    r'^(?:\d+\.?\s*)?Introduction\b', 
-                    clean_line, re.IGNORECASE
+                    r"^(?:\d+\.?\s*)?Introduction\b", clean_line, re.IGNORECASE
                 )
-                is_toc_entry = re.search(r'(?:\.{3,}|\b\d+$)', clean_line)
+                is_toc_entry = re.search(r"(?:\.{3,}|\b\d+$)", clean_line)
 
                 if is_intro_heading and not is_toc_entry and len(clean_line) < 50:
                     capturing = True
             else:
-                is_num_heading = re.match(r'^\d+\.\s+[A-Z]', clean_line)
+                is_num_heading = re.match(r"^\d+\.\s+[A-Z]", clean_line)
                 is_caps_heading = clean_line.isupper() and len(clean_line) > 4
                 if (is_num_heading or is_caps_heading) and len(clean_line) < 60:
                     break
@@ -475,45 +493,40 @@ class AnalysisWorker(QThread):
     def _try_ai_summarization(self, intro_text, is_short):
         try:
             requests.get("http://localhost:11434/", timeout=2)
-            
+
             if is_short:
                 prompt = f"""Extract the Project Name from:
                 {self.text[:2000]}
-                
+
                 Format: PROJECT_NAME: [name or "Not Found"]
                 """
             else:
                 prompt = f"""Extract two things:
                 1. Project Name from: {self.text[:2000]}
                 2. Summarize (max 15 sentences): {intro_text[:6000]}
-                
+
                 Format:
                 PROJECT_NAME: [name or "Not Found"]
                 INTRODUCTION_SUMMARY: [summary]
                 """
 
             response = requests.post(
-                'http://localhost:11434/api/generate',
-                json={
-                    "model": "gemma:2b",
-                    "prompt": prompt,
-                    "stream": False
-                },
-                timeout=180
+                "http://localhost:11434/api/generate",
+                json={"model": "gemma:2b", "prompt": prompt, "stream": False},
+                timeout=180,
             )
-            
+
             if response.status_code == 200:
-                ai_text = response.json()['response'].strip()
-                
+                ai_text = response.json()["response"].strip()
+
                 intro_match = re.search(
-                    r'INTRODUCTION_SUMMARY:\s*(.+)',
-                    ai_text, re.IGNORECASE | re.DOTALL
+                    r"INTRODUCTION_SUMMARY:\s*(.+)", ai_text, re.IGNORECASE | re.DOTALL
                 )
                 if intro_match:
                     return intro_match.group(1).strip()
-                    
+
             return simple_summarize(intro_text) if not is_short else intro_text
-            
+
         except Exception:
             self.status.emit("AI unreachable. Using offline algorithms...")
             return simple_summarize(intro_text) if not is_short else intro_text
@@ -539,7 +552,6 @@ class FileDetailsWorker(QThread):
             max_pages = min(3, len(self.pdf_handler.doc))
 
             for page_index in range(max_pages):
-
                 page = self.pdf_handler.get_page(page_index)
 
                 # HIGH DPI RENDERING
@@ -550,7 +562,7 @@ class FileDetailsWorker(QThread):
                     pix.width,
                     pix.height,
                     pix.stride,
-                    QImage.Format.Format_RGB888
+                    QImage.Format.Format_RGB888,
                 ).copy()
 
                 width = qimg.width()
@@ -565,12 +577,10 @@ class FileDetailsWorker(QThread):
                 processed = self.preprocess_for_ocr(arr)
 
                 # OCR CONFIG FOR TABLES
-                config = r'--oem 3 --psm 6'
+                config = r"--oem 3 --psm 6"
 
                 ocr_text = pytesseract.image_to_string(
-                    processed,
-                    lang='eng',
-                    config=config
+                    processed, lang="eng", config=config
                 )
 
                 # ALSO INCLUDE NATIVE PDF TEXT
@@ -586,15 +596,21 @@ class FileDetailsWorker(QThread):
             try:
                 # Prefer full PDF-based inference when possible so large title spans
                 # override short/incorrect OCR extracts (e.g., stray words like 'matter').
-                if getattr(self, 'pdf_handler', None) and getattr(self.pdf_handler, 'doc', None):
-                    pn = infer_project_name(full_ocr_text, pdf_handler=self.pdf_handler, quick=False)
+                if getattr(self, "pdf_handler", None) and getattr(
+                    self.pdf_handler, "doc", None
+                ):
+                    pn = infer_project_name(
+                        full_ocr_text, pdf_handler=self.pdf_handler, quick=False
+                    )
                 else:
                     pn = infer_project_name(full_ocr_text, quick=True)
 
                 if pn and pn.lower() not in {"not found", ""}:
                     current = (details.get("project_name") or "").strip()
                     # override when current is missing/placeholder or new candidate is substantially longer
-                    if current.lower() in {"not found", ""} or len(pn) > max(12, len(current) + 5):
+                    if current.lower() in {"not found", ""} or len(pn) > max(
+                        12, len(current) + 5
+                    ):
                         details["project_name"] = pn
             except Exception:
                 pass
@@ -604,47 +620,30 @@ class FileDetailsWorker(QThread):
             self.finished.emit(details)
 
         except ImportError:
-            self.finished.emit({
-                "error": "Please install pytesseract and opencv-python"
-            })
+            self.finished.emit(
+                {"error": "Please install pytesseract and opencv-python"}
+            )
 
         except Exception as e:
-            self.finished.emit({
-                "error": str(e)
-            })
+            self.finished.emit({"error": str(e)})
 
     def preprocess_for_ocr(self, image):
         gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
 
         # ENLARGE IMAGE
-        gray = cv2.resize(
-            gray,
-            None,
-            fx=2,
-            fy=2,
-            interpolation=cv2.INTER_CUBIC
-        )
+        gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
 
         # DENOISE
         gray = cv2.fastNlMeansDenoising(gray)
 
         # SHARPEN
-        kernel = np.array([
-            [-1,-1,-1],
-            [-1, 9,-1],
-            [-1,-1,-1]
-        ])
+        kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
 
         sharp = cv2.filter2D(gray, -1, kernel)
 
         # THRESHOLD
         thresh = cv2.adaptiveThreshold(
-            sharp,
-            255,
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY,
-            31,
-            15
+            sharp, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 15
         )
 
         return thresh

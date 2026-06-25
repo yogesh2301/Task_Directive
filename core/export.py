@@ -3,18 +3,27 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from PyQt6.QtPrintSupport import QPrinter
-from PyQt6.QtGui import QTextDocument
-from docx import Document
-from docx.image.image import Image as DocxImage
-from docx.shared import Pt, Inches
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
-from docx.enum.section import WD_SECTION
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
+
+# Path to the DRDO logo image stored in the project root.
+# Resolved relative to this file (core/export.py) so it works from any
+# working directory.
+_LOGO_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "drdo_logo.png",
+)
+
 import pythoncom
 import win32com.client
+from docx import Document
+from docx.enum.section import WD_SECTION
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.image.image import Image as DocxImage
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Inches, Pt
+from PyQt6.QtGui import QTextDocument
+from PyQt6.QtPrintSupport import QPrinter
 
 
 class PDFExporter:
@@ -27,12 +36,12 @@ class PDFExporter:
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
         printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
         printer.setOutputFileName(temp_path)
-        
-        ai_html = intro_text.replace('\n', '<br>')
-        
+
+        ai_html = intro_text.replace("\n", "<br>")
+
         sth_html = PDFExporter._build_stakeholders_table(stakeholders)
         ct_html = PDFExporter._build_cert_task_table(cert_tasks)
-        
+
         notes_html_blocks = []
         # Change 1: Support manual notes as either a dict or a plain string.
         # If a string is passed, convert newline characters to HTML breaks.
@@ -41,13 +50,13 @@ class PDFExporter:
                 if content:
                     block = str(content)
                     if not block.strip().startswith("<"):
-                        block = block.replace('\n', '<br>')
+                        block = block.replace("\n", "<br>")
                     notes_html_blocks.append(f"<h3>{heading}</h3>{block}")
         else:
             notes_html = str(manual_notes)
-            notes_html_blocks.append(notes_html.replace('\n', '<br>'))
+            notes_html_blocks.append(notes_html.replace("\n", "<br>"))
         notes_section = "".join(notes_html_blocks)
-        
+
         final_html = f"""
             <h1>Document Analysis Report</h1><hr>
             <h2>1. Introduction Summary</h2><p>{ai_html}</p><br>
@@ -56,11 +65,11 @@ class PDFExporter:
             <h2>Stakeholders</h2>{sth_html}<br>
             <h2>Certification Task Allocation</h2>{ct_html}
         """
-        
+
         doc = QTextDocument()
         doc.setHtml(final_html)
         doc.print(printer)
-        
+
         return temp_path
 
     @staticmethod
@@ -69,8 +78,8 @@ class PDFExporter:
                   <tr><th>Sl No.</th><th>Organisation</th><th>Role</th><th>Activities</th></tr>"""
         if stakeholders:
             for i, sh in enumerate(stakeholders):
-                html += f"""<tr><td>{i+1}</td><td>{sh.get('org', '')}</td>
-                           <td>{sh.get('role', '')}</td><td>{sh.get('activities', '')}</td></tr>"""
+                html += f"""<tr><td>{i + 1}</td><td>{sh.get("org", "")}</td>
+                           <td>{sh.get("role", "")}</td><td>{sh.get("activities", "")}</td></tr>"""
         else:
             html += "<tr><td>&nbsp;</td><td></td><td></td><td></td></tr>"
         html += "</table>"
@@ -82,8 +91,8 @@ class PDFExporter:
                   <tr><th>Sl No.</th><th>Activity</th><th>Work Centre</th><th>Head</th></tr>"""
         if cert_tasks:
             for i, ct in enumerate(cert_tasks):
-                html += f"""<tr><td>{i+1}</td><td>{ct.get('activity', '')}</td>
-                           <td>{ct.get('centre', '')}</td><td>{ct.get('head', '')}</td></tr>"""
+                html += f"""<tr><td>{i + 1}</td><td>{ct.get("activity", "")}</td>
+                           <td>{ct.get("centre", "")}</td><td>{ct.get("head", "")}</td></tr>"""
         else:
             html += "<tr><td>&nbsp;</td><td></td><td></td><td></td></tr>"
         html += "</table>"
@@ -95,7 +104,7 @@ class DocxExporter:
     def export(save_path, **kwargs):
         """
         Export document to DOCX format.
-        
+
         Args:
             save_path: Path to save the DOCX file
             **kwargs: Any attributes to include in the document:
@@ -117,72 +126,86 @@ class DocxExporter:
         """
         # Change 2: Modified to accept **kwargs instead of fixed parameters for flexibility
         # Extract known parameters with defaults
-        project_name = kwargs.get('project_name', '')
-        intro_text = kwargs.get('intro_text', '')
-        manual_notes = kwargs.get('manual_notes', {})
+        project_name = kwargs.get("project_name", "")
+        intro_text = kwargs.get("intro_text", "")
+        manual_notes = kwargs.get("manual_notes", {})
         if isinstance(manual_notes, str):
             # CHANGED: Allow string manual notes as a single fallback field
             manual_notes = {"Other": manual_notes}
-        scope_items = kwargs.get('scope_items', [])
-        stakeholders = kwargs.get('stakeholders', [])
-        cert_tasks = kwargs.get('cert_tasks', [])
-        combos = kwargs.get('combos', {})
-        annexure3_image_path = kwargs.get('annexure3_image_path', None)
-        
+        scope_items = kwargs.get("scope_items", [])
+        stakeholders = kwargs.get("stakeholders", [])
+        cert_tasks = kwargs.get("cert_tasks", [])
+        combos = kwargs.get("combos", {})
+        annexure3_image_path = kwargs.get("annexure3_image_path", None)
+
         # Change 3: Handle table_data - can be passed directly or built from individual kwargs
         # This allows flexibility in how data is passed to the exporter
-        table_data = kwargs.get('table_data', {})
+        table_data = kwargs.get("table_data", {})
         if not table_data:
             # Change 4: Build table_data from individual data kwargs for better API
             # Maps individual parameters to the internal table_data structure
             table_data = {
-                "issue_details": kwargs.get('issue_details', {}),
-                "annexure1": kwargs.get('annexure1_data', []),
-                "annexure2": kwargs.get('annexure2_data', []),
-                "test_rigs": kwargs.get('test_rigs_data', []),
-                "aircraft_checks": kwargs.get('aircraft_checks_data', []),
+                "issue_details": kwargs.get("issue_details", {}),
+                "annexure1": kwargs.get("annexure1_data", []),
+                "annexure2": kwargs.get("annexure2_data", []),
+                "test_rigs": kwargs.get("test_rigs_data", []),
+                "aircraft_checks": kwargs.get("aircraft_checks_data", []),
             }
-        
+
         # Change 5: Define known parameters for exclusion from custom_attributes
         # Allows any additional custom kwargs to be passed through
         known_params = {
-            'project_name', 'intro_text', 'manual_notes', 
-            'scope_items', 'stakeholders', 'cert_tasks', 
-            'combos', 'annexure3_image_path', 'table_data',
-            'issue_details', 'annexure1_data', 'annexure2_data',
-            'test_rigs_data', 'aircraft_checks_data'
+            "project_name",
+            "intro_text",
+            "manual_notes",
+            "scope_items",
+            "stakeholders",
+            "cert_tasks",
+            "combos",
+            "annexure3_image_path",
+            "table_data",
+            "issue_details",
+            "annexure1_data",
+            "annexure2_data",
+            "test_rigs_data",
+            "aircraft_checks_data",
         }
-        
+
         # Change 6: Store any extra custom attributes for extensibility
         # Custom attributes can be added without modifying the function signature
-        custom_attributes = {k: v for k, v in kwargs.items() 
-                            if k not in known_params}
-        
+        custom_attributes = {k: v for k, v in kwargs.items() if k not in known_params}
+
         table_data = table_data or {}
         doc = Document()
-        style = doc.styles['Normal']
-        style.font.name = 'Calibri'
+        style = doc.styles["Normal"]
+        style.font.name = "Calibri"
         style.font.size = Pt(11)
         style.paragraph_format.space_after = Pt(6)
         style.paragraph_format.line_spacing = 1.08
 
         # Title page
-        DocxExporter._add_title_page(
-            doc, project_name, table_data.get("issue_details")
-        )
-        
+        DocxExporter._add_title_page(doc, project_name, table_data.get("issue_details"))
+
         # Content pages
         section2 = doc.add_section(WD_SECTION.NEW_PAGE)
         section2.top_margin = Inches(0.75)
         section2.bottom_margin = Inches(0.75)
-        
+
         DocxExporter._add_content_sections(
-            doc, intro_text, manual_notes, scope_items,
-            stakeholders, cert_tasks, combos, annexure3_image_path, 
-            table_data, custom_attributes
+            doc,
+            intro_text,
+            manual_notes,
+            scope_items,
+            stakeholders,
+            cert_tasks,
+            combos,
+            annexure3_image_path,
+            table_data,
+            custom_attributes,
+            project_name=project_name,
         )
         DocxExporter._apply_document_spacing(doc)
-        
+
         doc.save(save_path)
 
     @staticmethod
@@ -281,7 +304,9 @@ class DocxExporter:
             r"C:\Program Files\LibreOffice\program\soffice.exe",
             r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
         ]
-        office = next((path for path in candidates if path and os.path.exists(path)), None)
+        office = next(
+            (path for path in candidates if path and os.path.exists(path)), None
+        )
         if not office:
             raise RuntimeError("LibreOffice executable was not found")
 
@@ -319,44 +344,93 @@ class DocxExporter:
         section1 = doc.sections[0]
         section1.top_margin = Inches(1.5)
         section1.bottom_margin = Inches(1.5)
-        
-        file_no = issue_details.get("file_no") or "________________________"
-        doc.add_paragraph(f"File No. {file_no}")
+
+        # Title page: show the auto-generated PBS file number.
+        # The Reference section (in content pages) shows the extracted document ref number.
+        pbs_no = (
+            issue_details.get("pbs_no")
+            or issue_details.get("file_no")
+            or "________________________"
+        )
+        doc.add_paragraph(f"File No. {pbs_no}")
         p = doc.add_paragraph()
         run = p.add_run("\nTASK DIRECTIVE\n")
         run.bold = True
         run.font.size = Pt(20)
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        
-        p = doc.add_paragraph("________ /2026")
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        doc.add_paragraph("\n\n\n")
+
+        doc.add_paragraph("")  # spacer
+
+        # Issue No. and Date of Issue row — bold labels, extracted values
         table = doc.add_table(rows=1, cols=2)
-        issue_no = issue_details.get("issue_no") or ""
-        date_of_issue = issue_details.get("date_of_issue") or ""
-        table.cell(0, 0).text = f"Issue No. {issue_no}"
-        table.cell(0, 1).text = f"Date of Issue: {date_of_issue}"
+        issue_no = issue_details.get("issue_no") or "________________"
+        date_of_issue = issue_details.get("date_of_issue") or "________________"
+
+        for cell, label, value in [
+            (table.cell(0, 0), "Issue No.: ", issue_no),
+            (table.cell(0, 1), "Date of Issue: ", date_of_issue),
+        ]:
+            cell.paragraphs[0].clear()
+            run_label = cell.paragraphs[0].add_run(label)
+            run_label.bold = True
+            run_label.font.size = Pt(11)
+            run_value = cell.paragraphs[0].add_run(value)
+            run_value.font.size = Pt(11)
 
         if not project_name or project_name.lower() == "not found":
             project_name = "__________________________________________"
         doc.add_paragraph(f"\nPROJECT NAME: {project_name}")
-#DOC EDIT
-        p = doc.add_paragraph("LOGO HERE\n\n\n\n\n\n\n\n\n\n\n\n\n\n")
+
+        # Insert DRDO logo if the file exists; fall back to a blank spacer.
+        p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p = doc.add_paragraph("CENTRE FOR MILITARY AIRWORTHINESS AND CERTIFICATION  \n (CEMILAC)")
+        if os.path.exists(_LOGO_PATH):
+            try:
+                run = p.add_run()
+                run.add_picture(_LOGO_PATH, width=Inches(2.2))
+                for _ in range(6):
+                    doc.add_paragraph("")
+            except Exception:
+                p.add_run("[DRDO Logo]")
+                for _ in range(8):
+                    doc.add_paragraph("")
+        else:
+            p.add_run("LOGO HERE")
+            for _ in range(12):
+                doc.add_paragraph("")
+
+        p = doc.add_paragraph(
+            "CENTRE FOR MILITARY AIRWORTHINESS AND CERTIFICATION  \n (CEMILAC)"
+        )
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p = doc.add_paragraph("DRDO, MoD")
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p = doc.add_paragraph("Marathahalli Colony Post, \n Bengaluru - 560037")
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        
+
     @staticmethod
     def _add_roman_list(doc, items):
         romans = [
-            "i", "ii", "iii", "iv", "v",
-            "vi", "vii", "viii", "ix", "x",
-            "xi", "xii", "xiii", "xiv", "xv",
-            "xvi", "xvii", "xviii", "xix", "xx"
+            "i",
+            "ii",
+            "iii",
+            "iv",
+            "v",
+            "vi",
+            "vii",
+            "viii",
+            "ix",
+            "x",
+            "xi",
+            "xii",
+            "xiii",
+            "xiv",
+            "xv",
+            "xvi",
+            "xvii",
+            "xviii",
+            "xix",
+            "xx",
         ]
 
         for index, item in enumerate(items):
@@ -369,47 +443,84 @@ class DocxExporter:
             p.add_run(f"{number}. ")
             p.add_run(item)
 
-
     @staticmethod
-    def _add_content_sections(doc, intro_text, manual_notes, scope_items,
-                              stakeholders, cert_tasks, combos,
-                              annexure3_image_path=None, table_data=None,
-                              custom_attributes=None):
-        # CHANGED: Added custom_attributes parameter to support extensibility
+    def _add_content_sections(
+        doc,
+        intro_text,
+        manual_notes,
+        scope_items,
+        stakeholders,
+        cert_tasks,
+        combos,
+        annexure3_image_path=None,
+        table_data=None,
+        custom_attributes=None,
+        project_name="",
+    ):
         table_data = table_data or {}
         custom_attributes = custom_attributes or {}
         if not isinstance(manual_notes, dict):
             manual_notes = {"Other": str(manual_notes)}
-        
-        # Introduction
+
+        issue_details = table_data.get("issue_details", {})
+
+        # ── Project name (appears before Introduction section) ───────────────────────
+        if project_name and project_name.lower() != "not found":
+            p = doc.add_paragraph()
+            run = p.add_run(f"Project: {project_name}")
+            run.bold = True
+            run.font.size = Pt(13)
+
+        # ── 1. Introduction ──────────────────────────────────────────────
         DocxExporter._add_heading(doc, "1. Introduction")
+        # Use the Introduction manual note (populated from raw document extraction).
+        # Fall back to intro_text only if no manual note was written.
+        intro_content = (
+            manual_notes.get("Introduction", "").strip()
+            or (intro_text.strip() if intro_text else "")
+            or " "
+        )
+        doc.add_paragraph(intro_content)
+
+        # ── 2. Reference ─────────────────────────────────────────────────
+        DocxExporter._add_heading(doc, "\n2. Reference")
+        # Reference section: use the document-extracted reference number and date.
+        # These are populated from the uploaded PDF's native text on upload.
+        # Fallback to blank lines if extraction did not find them.
+        file_no = issue_details.get("file_no") or "________________________"
+        date_issue = issue_details.get("date_of_issue") or "________________________"
+        ref_default = (
+            f"1. Document Name      : {project_name or '________________________'}\n"
+            f"2. Document Ref No    : {file_no}\n"
+            f"3. Document Issue Date: {date_issue}"
+        )
+        doc.add_paragraph(
+            DocxExporter._note(manual_notes, "Reference", default=ref_default)
+        )
+
+        # ── 3. Basis of Task Directive ───────────────────────────────────────
+        DocxExporter._add_heading(doc, "\n3. Basis Of Task Directive")
         doc.add_paragraph(
             DocxExporter._note(
                 manual_notes,
-                "Introduction",
-                default=(intro_text.strip() if intro_text else "") or " "
+                "Basis Of Task Directive",
+                default=(
+                    " 1. IMAP-23, Indian Military Airworthiness Procedure - 23\n"
+                    " 2. IMTAR-21, Version 2.0 Indian Military Technical Airworthiness Requirements\n"
+                    " 3. Applicable Airworthiness Directives and CEMILAC Directives"
+                ),
             )
         )
 
-        # Other sections
-        DocxExporter._add_heading(doc, "\n2. Reference")
-        doc.add_paragraph(DocxExporter._note(
-            manual_notes,
-            "Reference",
-            default=" 1. PBS-WBS \n 2. Project brief "
-        ))
-        
-        DocxExporter._add_heading(doc, "\n3. Basis Of Task Directive")
-        doc.add_paragraph(DocxExporter._note(
-            manual_notes,
-            "Basis Of Task Directive",
-            default="  1. IMAP-23, Indian Military Airworthiness Procedure - 23\n 2. IMTAR-21, Version 2.0 Indian Military Technical Airworthiness Requirements\n 3. Applicable Airworthiness Directives and CEMILAC Directives "
-        ))
-        
-        # Scope
+        # ── 4. Scope of Task Directive ───────────────────────────────────────
         scope_text = DocxExporter._numbered_text(scope_items, default=" ")
         DocxExporter._add_heading(doc, "\n4. Scope Of Task Directive")
-        doc.add_paragraph("The scope of the Task Directive is to assign the certification responsibilities to CEMILAC and RCMAs to enable smooth communication and transactions between the design agencies and the certification agency. The designated RCMAs provide concurrent certification coverage for:")
+        doc.add_paragraph(
+            "The scope of the Task Directive is to assign the certification "
+            "responsibilities to CEMILAC and RCMAs to enable smooth communication "
+            "and transactions between the design agencies and the certification agency. "
+            "The designated RCMAs provide concurrent certification coverage for:"
+        )
         doc.add_paragraph(scope_text)
         scope_note = DocxExporter._note(
             manual_notes, "Scope", "Scope Of Task Directive", default=""
@@ -417,55 +528,54 @@ class DocxExporter:
         if scope_note:
             doc.add_paragraph(scope_note)
 
-        # Stakeholders
+        # ── 5. Stakeholders ────────────────────────────────────────────────
         DocxExporter._add_heading(doc, "\n5. Stakeholders")
         doc.add_paragraph(
-            "The following are the major stakeholders from certification perspective for the development, integration of the system on the various Rigs."
+            "The following are the major stakeholders from certification perspective "
+            "for the development, integration of the system on the various Rigs."
         )
         DocxExporter._add_stakeholders_table(doc, stakeholders)
         DocxExporter._add_manual_note(doc, manual_notes, "Stakeholders")
 
-        DocxExporter._add_heading(doc, "\n  6. Certification Work Breakdown")
+        # ── 6. Certification Work ──────────────────────────────────────────
+        DocxExporter._add_heading(doc, "\n6. Certification Work Breakdown")
         cert_items = DocxExporter._combo_items(combos, "Certification Work Breakdown")
         doc.add_paragraph("The following are the major certification activities:")
-        doc.add_paragraph(DocxExporter._numbered_text(
-            cert_items,
-            default="______________________________________________"
-        ))
-        cert_note = DocxExporter._note(
-            manual_notes,
-            "Certification Work Breakdown",
-            default=""
+        doc.add_paragraph(
+            DocxExporter._numbered_text(
+                cert_items, default="______________________________________________"
+            )
         )
-        if cert_note:
-            doc.add_paragraph(cert_note)
+        DocxExporter._add_manual_note(doc, manual_notes, "Certification Work Breakdown")
 
-        DocxExporter._add_heading(doc, "\n7. Task Allocation")
-        task_items = DocxExporter._combo_items(combos, "Task Allocation")
-        doc.add_paragraph(DocxExporter._note(
-            manual_notes,
-            "Task Allocation",
-            default="\n".join(task_items) if task_items else ""
-        ))
+        # ── 7. Task Allocation by Coordinating Directorate ───────────────────────
+        DocxExporter._add_heading(
+            doc, "\n7. Task Allocation by Coordinating Directorate"
+        )
 
         DocxExporter._add_heading(doc, "7.1 Coordinating Directorate")
         doc.add_paragraph(
             DocxExporter._note(
                 manual_notes,
                 "Coordinating Directorate",
-                default="The overall certification of the project would be managed by: \n Director () / RCMA ()\n\n The responsibilities of the Coordinating Directorate would be as follows:\n\n i. Plan, review and monitor the progress of the certification.\n\n ii. Participate in System level and software meetings \n \niii. Propose Constitution of SCRB and TARB as and when required."
+                default=(
+                    "The overall certification of the project would be managed by:\n"
+                    "Director () / RCMA ()\n\n"
+                    "The responsibilities of the Coordinating Directorate would be as follows:\n\n"
+                    " i.   Plan, review and monitor the progress of the certification.\n\n"
+                    " ii.  Participate in System level and software meetings.\n\n"
+                    " iii. Propose Constitution of SCRB and TARB as and when required."
+                ),
             )
         )
 
         DocxExporter._add_heading(doc, "\n7.2 Single Point of Contact (SPoC)")
-
         spoc_note = DocxExporter._manual_note(
             manual_notes,
             "Single Point of Contact( SPoC)",
             "Single Point of Contact",
-            "SPoC"
+            "SPoC",
         )
-
         if spoc_note:
             doc.add_paragraph(spoc_note)
         else:
@@ -473,126 +583,110 @@ class DocxExporter:
                 "The following officer would be responsible for overall certification "
                 "coordination with all the stakeholders for smooth certification of the project:"
             )
-
             doc.add_paragraph("Sri ..., Sc-...")
             doc.add_paragraph("RCMA ()/ Dte ()")
-
-            doc.add_paragraph(
-                "The responsibilities of the SPoC would be as follows:"
+            doc.add_paragraph("The responsibilities of the SPoC would be as follows:")
+            DocxExporter._add_roman_list(
+                doc,
+                [
+                    "Ensure prompt assignment of Project Leader/ Dealing Officer by all RCMAs.",
+                    "Ensure correct uplinking and downlinking of each project registered by the Design Agency, in line with the PBS.",
+                    "Work in coordination with the D&D agency and ensure timely execution of certification activities.",
+                    "Liaise with concerned RCMAs, CEMILAC directorates and other stakeholders.",
+                    "Ensure finalisation of TAB and ACP after taking inputs from all stakeholders.",
+                    "Keep a repository on incoming and outgoing artefacts/documents and ensure timely dissemination of information to all certification centres/stakeholders.",
+                    "Apprise Coordinating Directorate the progression of certification activities.",
+                    "Plan and coordinate Certification Review Meetings.",
+                    "Member Secretary for SCRB and TARB as and when required.",
+                    "Coordination for installation/integration/flight clearance.",
+                ],
             )
 
-            DocxExporter._add_roman_list(doc, [
-                "Ensure prompt assignment of Project Leader/ Dealing Officer by all RCMAs.",
-                "Ensure correct uplinking and downlinking of each project registered by the Design Agency, in line with the PBS.",
-                "Work in coordination with the D&D agency and ensure timely execution of certification activities.",
-                "Liaise with concerned RCMAs, CEMILAC directorates and other stakeholders.",
-                "Ensure finalisation of TAB and ACP after taking inputs from all stakeholders.",
-                "Keep a repository on incoming and outgoing artefacts/documents and ensure timely dissemination of information to all certification centres/stakeholders.",
-                "Apprise Coordinating Directorate the progression of certification activities.",
-                "Plan and coordinate Certification Review Meetings.",
-                "Member Secretary for SCRB and TARB as and when required.",
-                "Coordination for installation/integration/flight clearance.",
-            ])
         DocxExporter._add_heading(doc, "7.3 Certification Task Allocation")
         doc.add_paragraph(
-            "The detailed certification task allocation is given below. The detailed list of allocation of certification responsibility to RCMAs and dealing officers, in respect of each System/LRU, is given in Annexure - 1 and contact details are given in Annexure - 2 respectively."
+            "The detailed certification task allocation is given below. The detailed list "
+            "of allocation of certification responsibility to RCMAs and dealing officers, "
+            "in respect of each System/LRU, is given in Annexure-I and contact details "
+            "are given in Annexure-II respectively."
         )
         DocxExporter._add_cert_task_table(doc, cert_tasks)
-        DocxExporter._add_manual_note(doc, manual_notes, "Certification Task Allocation", "Cert Allocation")
+        DocxExporter._add_manual_note(
+            doc, manual_notes, "Certification Task Allocation", "Cert Allocation"
+        )
 
-        DocxExporter._add_heading(doc, "7.4 Issue of Clearance")
-        doc.add_paragraph(DocxExporter._note(
-            manual_notes,
-            "Issue of Clearance",
-            default="""a. On satisfactory completion of Software IV&V, clearance for Software would be issued by RD, RCMA (...) 
-            \n b. On satisfactory completion of SOFT/QT tests on the LRU, clearance for Hardware and CEH would be issued by RDs of respective system RCMAs as per Annexure-1. 
-                \n c. On completion of Software, Hardware and CEH clearances of LRUs, and compliance of Systems to TARB, the installation clearances for the systems would be issued by. 
-            \n  d. On satisfactory completion of ground testing/ground adaptation, the system would be cleared by platform RD for ground integration and flight trials. 
-            \n  e. On satisfactory flight trial completion, System RCMAs shall issue Provisional Clearance and service use for the LRUs. 
-                \n f. Service use clearance for the Systems will be issued by.
-            \n  g. Based on the recommendation of Director(Aircraft), the platform will be issued with RMTC/ MTC by CE(A), CEMILAC."""
-        ))
+        # ── 8. Issue of Clearances ───────────────────────────────────────────
+        DocxExporter._add_heading(doc, "\n8. Issue of Clearances")
+        doc.add_paragraph(
+            DocxExporter._note(
+                manual_notes,
+                "Issue of Clearance",
+                default=(
+                    "a. On satisfactory completion of Software IV&V, clearance for Software would "
+                    "be issued by RD, RCMA (...)\n"
+                    "b. On satisfactory completion of SOFT/QT tests on the LRU, clearance for Hardware "
+                    "and CEH would be issued by RDs of respective system RCMAs as per Annexure-I.\n"
+                    "c. On completion of Software, Hardware and CEH clearances of LRUs, and compliance "
+                    "of Systems to TARB, the installation clearances for the systems would be issued.\n"
+                    "d. On satisfactory completion of ground testing/ground adaptation, the system would "
+                    "be cleared by platform RD for ground integration and flight trials.\n"
+                    "e. On satisfactory flight trial completion, System RCMAs shall issue Provisional "
+                    "Clearance and service use for the LRUs.\n"
+                    "f. Service use clearance for the Systems will be issued.\n"
+                    "g. Based on the recommendation of Director(Aircraft), the platform will be issued "
+                    "with RMTC/MTC by CE(A), CEMILAC."
+                ),
+            )
+        )
 
-        DocxExporter._add_heading(doc, "8. SCRB And TARB")
-        doc.add_paragraph(DocxExporter._note(
-            manual_notes,
-            "SCRB And TARB",
-            default="Based on the criticality, complexity and maturity level, the Chief Executive (A) would constitute System Certification Review Board as and when required. The Main contractor shall constitute Test Adequacy Review Board before major clearances, as requested by CEMILAC."
-        ))
-
-        DocxExporter._add_heading(doc, "9. Communication")
-        doc.add_paragraph(DocxExporter._note(
-            manual_notes,
-            "Communication",
-            default=""" \n - Respective RCMAs would be responsible for on-boarding the Design Agency and the projects in e-Certification System (e-CS).
-            \n - All project related technical communication between the design agency and CEMILAC would be through e-CS only.
-            \n - Design agencies have to register the projects on e-CS as per the Annexure -1. Each line item is instantiated as a project on e-CS. These will be assigned internally by e-CS administrator to the designated RCMA and dealing officers. Design agencies are to use the ISO boot USB/ Crypto dongle to upload the documents project-wise on the e-CS. No documents will be accepted via email/ external storage devices/ hard copy
-            \n - The inherent security features of the e-certification portal would ensure that the document is protected and is accessible only to the assigned personnel.
-            \n - All the documents and certificates, and project development history would be automatically stored in CEMILAC data centre for retention and future reference. """
-        ))
-
-        DocxExporter._add_heading(doc, "10. Certification Progress Review")
+        # ── 9. Certification Progress Review ─────────────────────────────────
+        DocxExporter._add_heading(doc, "\n9. Certification Progress Review")
         DocxExporter._add_ce_signature_paragraph(
             doc,
             DocxExporter._note(
                 manual_notes,
                 "Certification Progress Review",
-                default="In order to ensure smooth progress of certification and provide mid-course corrections, review meetings chaired by Coordinating Director shall be conducted."
-            ) + "\n\n(CE CEMILAC)\n OS & Chief Executive (Airworthiness)"
+                default=(
+                    "In order to ensure smooth progress of certification and provide "
+                    "mid-course corrections, review meetings chaired by Coordinating "
+                    "Director shall be conducted."
+                ),
+            )
+            + "\n\n(CE CEMILAC)\nOS & Chief Executive (Airworthiness)",
         )
 
-        # DocxExporter._add_signature_block(doc, manual_notes)
+        # ── 10. Distribution List ─────────────────────────────────────────────
+        DocxExporter._add_heading(doc, "\n10. Distribution List")
 
-        DocxExporter._add_heading(doc, "11. Distribution List")
-        DocxExporter._add_heading(doc, "11.1 External Organizations")
-        doc.add_paragraph(DocxExporter._note(
-            manual_notes,
-            "External Organization",
-            "External Organizations",
-            default=(
-                "1. Main contractor - Request to circulate to all the work centres of the project.\n"
-                "2. DG, DGAQA, New Delhi - Request to assign field establishments for QA Coverage.\n"
-                "3. AirHQ, IAF"
+        DocxExporter._add_heading(
+            doc, "10.1 External Organizations and Internal Departments"
+        )
+        doc.add_paragraph(
+            DocxExporter._note(
+                manual_notes,
+                "External Organization",
+                "External Organizations",
+                default=(
+                    "1. Main contractor - Request to circulate to all the work centres of the project.\n"
+                    "2. DG, DGAQA, New Delhi - Request to assign field establishments for QA Coverage.\n"
+                    "3. AirHQ, IAF"
+                ),
             )
-        ))
+        )
 
-        DocxExporter._add_heading(doc, "11.2 Internal Distribution")
+        DocxExporter._add_heading(doc, "10.2 Internal Distribution")
         internal_items = DocxExporter._combo_items(combos, "Internal Distribution")
         doc.add_paragraph(
             DocxExporter._note(
                 manual_notes,
                 "Internal Distribution",
-                default="\n".join(internal_items) if internal_items else ""
+                default="\n".join(internal_items) if internal_items else "",
             )
         )
-        
-        # Add remaining notes at the end or wherever appropriate
-        handled_keys = [
-            "Introduction", "Reference", "Basis Of Task Directive",
-            "Scope", "Scope Of Task Directive", "Stakeholders",
-            "Certification Work Breakdown", "Task Allocation",
-            "Coordinating Directorate", "Single Point of Contact( SPoC)",
-            "Single Point of Contact", "SPoC", "Certification Task Allocation",
-            "Cert Allocation", "Issue of Clearance", "SCRB And TARB",
-            "Communication", "Certification Progress Review",
-            "Signatures", "External Organization", "Internal Distribution",
-            "Annexure-1", "Work Assignment List of LRUs",
-            "Test Rigs, Simulators and Ground Equipment Required",
-            "Aircraft Integration Checks and Flight Clearance",
-            "Annexure-2", "Contact details of dealing officers and RDs",
-            "Annexure-3", "Product Break Down Structure"
-        ]
-        other_notes = {k: v for k, v in manual_notes.items() if k not in handled_keys and v}
-        if other_notes:
-            DocxExporter._add_heading(doc, "Additional Manual Notes")
-            for k, v in other_notes.items():
-                p = doc.add_paragraph()
-                p.add_run(f"{k}:").bold = True
-                doc.add_paragraph(v)
 
+        # ── Annexure-I ─────────────────────────────────────────────────────
         doc.add_page_break()
-        DocxExporter._add_heading(doc, "Annexure-1")
-        doc.add_paragraph("Work Assignment list of LRUs")
+        DocxExporter._add_heading(doc, "Annexure-I")
+        doc.add_paragraph("Work Assignment List of LRUs")
         DocxExporter._add_annexure_table(
             doc,
             table_data.get("annexure1"),
@@ -600,16 +694,18 @@ class DocxExporter:
                 "Sl No",
                 "Certifiable item",
                 "Design agency",
-                "Applicable Subpart",
                 "Designated Directorate/ RCMA",
-                "Dealing Officer(s)",
+                "Dealing Officer HW",
+                "Dealing Officer CH",
+                "Dealing Officer SW",
             ],
             [
                 "certifiable_item",
                 "design_agency",
-                "applicable_subpart",
                 "designated_directorate",
-                "dealing_officers",
+                "dealing_officer_hw",
+                "dealing_officer_ch",
+                "dealing_officer_sw",
             ],
             blank_rows=3,
         )
@@ -617,7 +713,7 @@ class DocxExporter:
             doc, manual_notes, "Annexure-1", "Work Assignment List of LRUs"
         )
 
-        doc.add_page_break()
+        # ── Annexure-I: Test Rigs ───────────────────────────────────────────────
         doc.add_paragraph("Test Rigs, Simulators and Ground Equipment Required")
         DocxExporter._add_annexure_table(
             doc,
@@ -640,14 +736,12 @@ class DocxExporter:
             blank_rows=3,
         )
         DocxExporter._add_annexure_note(
-            doc,
-            manual_notes,
-            "Test Rigs, Simulators and Ground Equipment Required"
+            doc, manual_notes, "Test Rigs, Simulators and Ground Equipment Required"
         )
 
-        doc.add_page_break()
+        # ── Annexure-I: Aircraft Integration ───────────────────────────────────
         DocxExporter._add_heading(
-            doc, "Aircraft Integration Checks and Flight Clearance "
+            doc, "Aircraft Integration Checks and Flight Clearance"
         )
         DocxExporter._add_annexure_table(
             doc,
@@ -668,13 +762,12 @@ class DocxExporter:
             blank_rows=2,
         )
         DocxExporter._add_annexure_note(
-            doc,
-            manual_notes,
-            "Aircraft Integration Checks and Flight Clearance"
+            doc, manual_notes, "Aircraft Integration Checks and Flight Clearance"
         )
 
+        # ── Annexure-II ──────────────────────────────────────────────────────
         doc.add_page_break()
-        DocxExporter._add_heading(doc, "Annexure-2")
+        DocxExporter._add_heading(doc, "Annexure-II")
         doc.add_paragraph("Contact details of dealing officers and RDs")
         DocxExporter._add_annexure_table(
             doc,
@@ -693,11 +786,12 @@ class DocxExporter:
             doc,
             manual_notes,
             "Annexure-2",
-            "Contact details of dealing officers and RDs"
+            "Contact details of dealing officers and RDs",
         )
 
+        # ── Annexure-III ─────────────────────────────────────────────────────
         doc.add_page_break()
-        DocxExporter._add_heading(doc, "Annexure-3")
+        DocxExporter._add_heading(doc, "Annexure-III")
         DocxExporter._add_heading(doc, "Product Break Down Structure")
         DocxExporter._add_annexure3_image(doc, annexure3_image_path)
 
@@ -833,7 +927,7 @@ class DocxExporter:
     @staticmethod
     def _add_stakeholders_table(doc, stakeholders):
         table = doc.add_table(rows=1, cols=4)
-        table.style = 'Table Grid'
+        table.style = "Table Grid"
         hdr_cells = table.rows[0].cells
         headers = [
             "Sl No.",
@@ -848,9 +942,9 @@ class DocxExporter:
             for i, sh in enumerate(stakeholders):
                 row_cells = table.add_row().cells
                 row_cells[0].text = str(i + 1)
-                row_cells[1].text = sh.get('org', '')
-                row_cells[2].text = sh.get('role', '')
-                row_cells[3].text = sh.get('activities', '')
+                row_cells[1].text = sh.get("org", "")
+                row_cells[2].text = sh.get("role", "")
+                row_cells[3].text = sh.get("activities", "")
         else:
             for _ in range(3):
                 table.add_row()
@@ -860,7 +954,7 @@ class DocxExporter:
     @staticmethod
     def _add_cert_task_table(doc, cert_tasks):
         table = doc.add_table(rows=1, cols=4)
-        table.style = 'Table Grid'
+        table.style = "Table Grid"
         hdr_cells = table.rows[0].cells
         headers = [
             "Sl No.",
@@ -875,9 +969,9 @@ class DocxExporter:
             for i, ct in enumerate(cert_tasks):
                 row_cells = table.add_row().cells
                 row_cells[0].text = str(i + 1)
-                row_cells[1].text = ct.get('activity', '')
-                row_cells[2].text = ct.get('centre', '')
-                row_cells[3].text = ct.get('head', '')
+                row_cells[1].text = ct.get("activity", "")
+                row_cells[2].text = ct.get("centre", "")
+                row_cells[3].text = ct.get("head", "")
         else:
             for _ in range(3):
                 table.add_row()
@@ -889,7 +983,7 @@ class DocxExporter:
         headers = headers or ["Sl No", "ABC", "Abc2", "Abc3", "Abc4", "Abc5"]
         keys = keys or ["abc", "abc2", "abc3", "abc4", "abc5"]
         table = doc.add_table(rows=1, cols=len(headers))
-        table.style = 'Table Grid'
+        table.style = "Table Grid"
         hdr_cells = table.rows[0].cells
         for i, header in enumerate(headers):
             hdr_cells[i].text = header
